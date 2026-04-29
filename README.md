@@ -1,160 +1,160 @@
-# Инжектор чата Nebulous.io
+# Nebulous.io Chat Injector
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/0dd68859-74e2-40b1-b492-e29604f27557" width="70%" />
 </p>
 
-CLI-инструмент для отправки сообщений в чат Nebulous.io через Frida.
+A CLI tool for sending messages to the Nebulous.io chat through Frida.
 
-Сначала агент перехватывает реальный UDP-пакет сообщения из игры и сохраняет его как template. После этого CLI может собирать новые chat-пакеты на основе того же сетевого контекста клиента и отправлять их через `sendto` или `send`.
+The Frida agent first intercepts a real UDP chat packet from the game and stores it as a template. After that, the CLI can build new chat packets from the same client network context and send them through `sendto` or `send`.
 
-## Требования
+## Requirements
 
 - Python 3.9+.
-- Python-пакет `frida`.
-- `adb` в `PATH`.
-- Android-устройство или Android-эмулятор, который виден через `adb`.
-- `frida-server`, уже положенный на Android-цель, обычно в `/data/local/tmp/frida-server`.
-- Root-доступ через `adb shell su -c ...` для запуска `frida-server`.
-- Запущенная игра Nebulous.io.
+- The Python `frida` package.
+- `adb` available in `PATH`.
+- An Android device or Android emulator visible through `adb`.
+- `frida-server` already copied to the Android target, usually at `/data/local/tmp/frida-server`.
+- Root access through `adb shell su -c ...` to start `frida-server`.
+- Nebulous.io running on the target device.
 
-Конкретный эмулятор не важен. Подойдёт любой эмулятор или физическое Android-устройство, если `adb devices` его видит, версия `frida-server` совместима с установленным Python-пакетом `frida`, а процесс игры доступен для attach.
+The specific emulator does not matter. Any emulator or physical Android device should work as long as `adb devices` can see it, the `frida-server` version is compatible with the installed Python `frida` package, and the game process can be attached to.
 
-## Запуск
+## Running
 
-Обычный USB/ADB flow, если устройство уже видно Frida:
+Standard USB/ADB flow, when the device is already visible to Frida:
 
 ```bash
 python chat_cli.py
 ```
 
-TCP/ADB flow, если нужно сначала подключиться к цели по `ip:port`:
+TCP/ADB flow, when you need to connect to the target by `ip:port` first:
 
 ```bash
 python chat_cli.py --adb 127.0.0.1:62001
 ```
 
-Кастомный путь к `frida-server` на Android-цели:
+Custom `frida-server` path on the Android target:
 
 ```bash
 python chat_cli.py --adb 127.0.0.1:62001 --frida-server-path /data/local/tmp/frida-server
 ```
 
-Также доступен пакетный запуск:
+Package-style execution is also available:
 
 ```bash
 python -m nebulous_chat_cli --adb 127.0.0.1:62001
 ```
 
-Внутри CLI есть команда `/help`.
+Inside the CLI, use `/help` to list available commands.
 
-## ADB TCP И Frida-Server
+## ADB TCP And Frida Server
 
-При запуске с `--adb HOST:PORT` программа делает:
+When started with `--adb HOST:PORT`, the program does the following:
 
-1. Проверяет доступность `adb`.
-2. Выполняет `adb connect HOST:PORT`.
-3. Выполняет `adb -s HOST:PORT wait-for-device`.
-4. Проверяет `frida-server` через `adb -s HOST:PORT shell su -c "pidof frida-server"`.
-5. Если сервер не запущен, стартует его через `su -c`:
+1. Checks that `adb` is available.
+2. Runs `adb connect HOST:PORT`.
+3. Runs `adb -s HOST:PORT wait-for-device`.
+4. Checks `frida-server` with `adb -s HOST:PORT shell su -c "pidof frida-server"`.
+5. If the server is not running, starts it through `su -c`:
 
 ```bash
 adb -s HOST:PORT shell su -c "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"
 ```
 
-6. Ждёт появления Frida device с id `HOST:PORT`.
-7. Делает attach к процессу `Nebulous.io`.
+6. Waits for a Frida device with the id `HOST:PORT`.
+7. Attaches to the `Nebulous.io` process.
 
-Важно: CLI не скачивает и не загружает `frida-server` автоматически. Бинарник должен уже лежать на устройстве или в эмуляторе. Если используется Android Wireless Debugging с pairing, `adb pair` нужно выполнить заранее; CLI автоматизирует только `adb connect HOST:PORT`.
+Important: the CLI does not download or upload `frida-server` automatically. The binary must already exist on the device or emulator. If you use Android Wireless Debugging with pairing, run `adb pair` beforehand; the CLI only automates `adb connect HOST:PORT`.
 
-## Как Использовать
+## Usage
 
-1. Запусти Android-эмулятор или подключи устройство.
-2. Убедись, что цель видна через ADB:
+1. Start an Android emulator or connect a device.
+2. Make sure the target is visible through ADB:
 
 ```bash
 adb devices
 ```
 
-3. Убедись, что `frida-server` лежит на Android-цели, например:
+3. Make sure `frida-server` exists on the Android target, for example:
 
 ```bash
 adb -s 127.0.0.1:62001 shell su -c "ls -l /data/local/tmp/frida-server"
 ```
 
-4. Открой Nebulous.io и зайди в комнату.
-5. Запусти CLI:
+4. Open Nebulous.io and join a room.
+5. Start the CLI:
 
 ```bash
 python chat_cli.py --adb 127.0.0.1:62001
 ```
 
-6. В игре вручную отправь любое сообщение в общий чат.
-7. Дождись в консоли лога вида:
+6. In the game, manually send any message to the public chat.
+7. Wait until the console prints a log like this:
 
 ```text
 [CHAT TEMPLATE] source=sendto fd=... nick="..." msg="hello"
 ```
 
-8. Теперь можно писать сообщения прямо в CLI:
+8. You can now type messages directly in the CLI:
 
 ```text
 > test
-> привет
+> hello
 > yoo how are you
 ```
 
-## Команды CLI
+## CLI Commands
 
 ```text
-/status        показать состояние template/fd/nick/rate/max
-/max 128       установить maxLenBytes
-/rate 1000     установить rate-limit в миллисекундах
-/clear         сбросить пойманный template
-/help          показать помощь
-/exit          выйти
-/quit          выйти
+/status        show the template/fd/nick/rate/max state
+/max 128       set maxLenBytes
+/rate 1000     set the rate limit in milliseconds
+/clear         clear the captured template
+/help          show help
+/exit          exit
+/quit          exit
 ```
 
-Обычный текст без `/` отправляется в чат через Frida RPC.
+Plain text without a leading `/` is sent to the chat through Frida RPC.
 
-## Структура Проекта
+## Project Structure
 
-- `chat_cli.py` - совместимый entrypoint для запуска.
-- `nebulous_chat_cli/` - Python-пакет с CLI, командами, ADB bootstrap и Frida lifecycle.
-- `agent/src/` - исходники Frida-агента по модулям.
-- `chat_injector_agent.js` - собранный агент, который загружает CLI.
-- `tests/` - Python и JS тесты для чистой логики.
+- `chat_cli.py` - compatibility entrypoint for running the CLI.
+- `nebulous_chat_cli/` - Python package with the CLI, commands, ADB bootstrap, and Frida lifecycle.
+- `agent/src/` - modular Frida agent source files.
+- `chat_injector_agent.js` - bundled agent loaded by the CLI.
+- `tests/` - Python and JS tests for pure logic.
 
-## Сборка Frida-Агента
+## Building The Frida Agent
 
-Исходники агента находятся в `agent/src`. Корневой `chat_injector_agent.js` хранится в репозитории уже собранным, чтобы `python chat_cli.py` работал без обязательной JS-сборки.
+The agent source files are in `agent/src`. The root-level `chat_injector_agent.js` is committed already bundled so that `python chat_cli.py` works without requiring a JS build step.
 
-Если установлен Node.js/npm, агент можно пересобрать так:
+If Node.js/npm is installed, rebuild the agent with:
 
 ```bash
 npm install
 npm run build:agent
 ```
 
-## Как Работает
+## How It Works
 
-Frida-агент подключается к системным функциям:
+The Frida agent hooks these system functions:
 
 ```text
 send
 sendto
 ```
 
-Когда игра отправляет UDP-пакет, агент проверяет:
+When the game sends a UDP packet, the agent checks:
 
 ```text
 packet[0] == 0x89
 ```
 
-Это opcode chat-пакета.
+This is the chat packet opcode.
 
-После обнаружения пакет разбирается так:
+After detection, the packet is parsed as:
 
 ```text
 0x00    opcode (0x89)
@@ -163,27 +163,27 @@ packet[0] == 0x89
 ...     nickname
 ...     msgLen (u16 BE)
 ...     message
-...     tail (служебные данные)
+...     tail (service data)
 ```
 
-Строки хранятся как:
+Strings are stored as:
 
 ```text
 u16 (big-endian) + UTF-8 bytes
 ```
 
-Новый пакет отправляется через тот же socket:
+The new packet is sent through the same socket:
 
 ```text
-sendto(fd, ...)   // если есть sockaddr
-или
+sendto(fd, ...)   // when sockaddr is available
+or
 send(fd, ...)     // fallback
 ```
 
-Tail пакета не меняется:
+The packet tail is left unchanged:
 
 ```text
 ... ff ff ff ff 00 00 ...
 ```
 
-Он содержит служебные данные: flags, id, состояние клиента и другие поля.
+It contains service data: flags, id, client state, and other fields.
