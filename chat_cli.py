@@ -1,15 +1,15 @@
-# chat_cli.py
-#
-# Python controller for chat_injector_agent.js
-#
-# Запуск:
-#   python chat_cli.py
-#
-# Требования:
-#   pip install frida
-#
-# Перед отправкой через CLI нужно вручную отправить любое сообщение
-# в игровом чате Nebulous.io, чтобы агент поймал свежий template.
+
+
+
+
+
+
+
+
+
+
+
+
 
 from __future__ import annotations
 
@@ -111,8 +111,8 @@ Commands:
 
 
 def get_rpc(script: frida.core.Script) -> Any:
-    # Frida 17.x: exports_sync.
-    # На случай другой версии оставлен fallback.
+
+
     rpc = getattr(script, "exports_sync", None)
     if rpc is not None:
         return rpc
@@ -234,7 +234,7 @@ def main() -> int:
                 print_warn("Неизвестная команда. Напиши /help.")
                 continue
 
-            # Обычный текст -> sendchat.
+
             try:
                 st = get_status_safe(rpc)
             except Exception as exc:

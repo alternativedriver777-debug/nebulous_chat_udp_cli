@@ -1,24 +1,6 @@
 'use strict';
 
-/*
-    Nebulous.io chat injector agent.
 
-    Основано на рабочей логике inject_generated_chat.js:
-    - hook send/sendto;
-    - packet[0] == 0x89;
-    - nickLen u16 BE;
-    - nickname;
-    - msgLen u16 BE;
-    - message;
-    - tail переносится без изменений.
-
-    Отличие:
-    - нет авто-замены hello/world;
-    - template сохраняется;
-    - отправка идёт через rpc.exports.sendchat(text);
-    - есть maxLenBytes и rateLimitMs;
-    - injected packet не перезаписывает template.
-*/
 
 const CHAT_OPCODE = 0x89;
 const MAX_PACKET_LEN = 8192;
@@ -48,11 +30,7 @@ function quote(s) {
     }
 }
 
-/*
-    ВАЖНО:
-    Рабочий старый скрипт использовал именно Module.getGlobalExportByName().
-    Поэтому здесь сначала используем его, а fallback — только запасной.
-*/
+
 function findExport(name) {
     try {
         const p = Module.getGlobalExportByName(name);
@@ -298,9 +276,7 @@ function utf8Encode(text) {
     return out;
 }
 
-/*
-    Парсер максимально близок к старому рабочему parseChatFromPtr().
-*/
+
 function parseChatFromPtr(buf, len) {
     try {
         if (len < 12) return null;
@@ -513,22 +489,22 @@ function buildChatMessage(template, newText) {
     const newLen = prefixLen + 2 + msgBytes.length + oldTailLen;
     const out = new Array(newLen);
 
-    // prefix до поля msgLen.
+    
     for (let i = 0; i < prefixLen; i++) {
         out[i] = packet[i] & 0xff;
     }
 
-    // новый msgLen.
+    
     writeU16BEToArray(out, prefixLen, msgBytes.length);
 
-    // новое сообщение.
+    
     const newMsgStart = prefixLen + 2;
 
     for (let i = 0; i < msgBytes.length; i++) {
         out[newMsgStart + i] = msgBytes[i] & 0xff;
     }
 
-    // старый tail без изменений.
+    
     const newTailStart = newMsgStart + msgBytes.length;
 
     for (let i = 0; i < oldTailLen; i++) {
