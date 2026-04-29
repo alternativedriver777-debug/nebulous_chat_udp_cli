@@ -1,23 +1,26 @@
 'use strict';
 
+// Generated from agent/src/*.js. Run `npm run build:agent` when Node/npm is available.
+(function () {
 
-
+// agent/src/constants.js
 const CHAT_OPCODE = 0x89;
 const MAX_PACKET_LEN = 8192;
 const HARD_MAX_MESSAGE_BYTES = 4096;
+const DEFAULT_MAX_LEN_BYTES = 128;
+const DEFAULT_RATE_LIMIT_MS = 1000;
 
-let maxLenBytes = 128;
-let rateLimitMs = 1000;
+// agent/src/state.js
 
-let injecting = false;
-let lastInjectAtMs = 0;
+const state = {
+    maxLenBytes: DEFAULT_MAX_LEN_BYTES,
+    rateLimitMs: DEFAULT_RATE_LIMIT_MS,
+    injecting: false,
+    lastInjectAtMs: 0,
+    chatTemplate: null
+};
 
-let chatTemplate = null;
-
-function log(s) {
-    console.log(s);
-}
-
+// agent/src/utils.js
 function nowMs() {
     return Date.now();
 }
@@ -30,132 +33,7 @@ function quote(s) {
     }
 }
 
-
-function findExport(name) {
-    try {
-        const p = Module.getGlobalExportByName(name);
-        console.log("[+] found global export: " + name + " -> " + p);
-        return p;
-    } catch (e) {
-        console.log("[-] getGlobalExportByName failed for " + name + ": " + e);
-    }
-
-    try {
-        if (typeof Module.findGlobalExportByName === "function") {
-            const p = Module.findGlobalExportByName(name);
-            if (p && !p.isNull()) {
-                console.log("[+] found global export via findGlobalExportByName: " + name + " -> " + p);
-                return p;
-            }
-        }
-    } catch (_) {}
-
-    try {
-        const libc = Process.getModuleByName("libc.so");
-        if (libc && typeof libc.findExportByName === "function") {
-            const p = libc.findExportByName(name);
-            if (p && !p.isNull()) {
-                console.log("[+] found libc export: " + name + " -> " + p);
-                return p;
-            }
-        }
-    } catch (_) {}
-
-    try {
-        if (typeof Module.findExportByName === "function") {
-            const p = Module.findExportByName("libc.so", name);
-            if (p && !p.isNull()) {
-                console.log("[+] found libc export via Module.findExportByName: " + name + " -> " + p);
-                return p;
-            }
-        }
-    } catch (_) {}
-
-    console.log("[-] export not found: " + name);
-    return null;
-}
-
-const sendPtr = findExport("send");
-const sendtoPtr = findExport("sendto");
-
-if (!sendPtr || !sendtoPtr) {
-    throw new Error("send/sendto not found");
-}
-
-const sendNative = new NativeFunction(sendPtr, "int", [
-    "int",
-    "pointer",
-    "int",
-    "int"
-]);
-
-const sendtoNative = new NativeFunction(sendtoPtr, "int", [
-    "int",
-    "pointer",
-    "int",
-    "int",
-    "pointer",
-    "int"
-]);
-
-function readU16BEFromPtr(p) {
-    const a = p.readU8();
-    const b = p.add(1).readU8();
-    return (a << 8) | b;
-}
-
-function readU16BEFromArray(arr, off) {
-    return ((arr[off] & 0xff) << 8) | (arr[off + 1] & 0xff);
-}
-
-function writeU16BEToArray(arr, off, v) {
-    arr[off] = (v >> 8) & 0xff;
-    arr[off + 1] = v & 0xff;
-}
-
-function ptrToArray(buf, len) {
-    const arr = [];
-
-    for (let i = 0; i < len; i++) {
-        arr.push(buf.add(i).readU8());
-    }
-
-    return arr;
-}
-
-function arrayToMemory(arr) {
-    const p = Memory.alloc(arr.length);
-
-    for (let i = 0; i < arr.length; i++) {
-        p.add(i).writeU8(arr[i] & 0xff);
-    }
-
-    return p;
-}
-
-function copySockaddrToArray(sockaddr, sockaddrLen) {
-    if (!sockaddr || sockaddr.isNull()) return null;
-    if (sockaddrLen <= 0 || sockaddrLen > 128) return null;
-
-    const arr = [];
-
-    try {
-        for (let i = 0; i < sockaddrLen; i++) {
-            arr.push(sockaddr.add(i).readU8());
-        }
-    } catch (e) {
-        console.log("[sockaddr] copy failed: " + e);
-        return null;
-    }
-
-    return arr;
-}
-
-function sockaddrArrayToMemory(arr) {
-    if (!arr || arr.length <= 0) return null;
-    return arrayToMemory(arr);
-}
-
+// agent/src/utf8.js
 function codePointToString(cp) {
     if (cp <= 0xffff) {
         return String.fromCharCode(cp);
@@ -276,6 +154,22 @@ function utf8Encode(text) {
     return out;
 }
 
+// agent/src/packet.js
+
+function readU16BEFromPtr(p) {
+    const a = p.readU8();
+    const b = p.add(1).readU8();
+    return (a << 8) | b;
+}
+
+function readU16BEFromArray(arr, off) {
+    return ((arr[off] & 0xff) << 8) | (arr[off + 1] & 0xff);
+}
+
+function writeU16BEToArray(arr, off, v) {
+    arr[off] = (v >> 8) & 0xff;
+    arr[off + 1] = v & 0xff;
+}
 
 function parseChatFromPtr(buf, len) {
     try {
@@ -330,23 +224,7 @@ function parseChatFromPtr(buf, len) {
             msgBytes.push(buf.add(msgStart + i).readU8());
         }
 
-        return {
-            nickLenOffset: nickLenOffset,
-            nickStart: nickStart,
-            nickLen: nickLen,
-            nickEnd: nickEnd,
-
-            msgLenOffset: msgLenOffset,
-            msgStart: msgStart,
-            msgLen: msgLen,
-            msgEnd: msgEnd,
-
-            tailOffset: msgEnd,
-            tailLen: len - msgEnd,
-
-            nick: utf8Decode(nickBytes),
-            msg: utf8Decode(msgBytes)
-        };
+        return makeChatInfo(len, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
 
     } catch (e) {
         console.log("[CHAT] parseChatFromPtr error: " + e);
@@ -378,6 +256,13 @@ function parseChatFromArray(arr) {
     const nickBytes = arr.slice(nickStart, nickEnd);
     const msgBytes = arr.slice(msgStart, msgEnd);
 
+    return makeChatInfo(arr.length, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+}
+
+function makeChatInfo(packetLen, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
+    const nickEnd = nickStart + nickLen;
+    const msgEnd = msgStart + msgLen;
+
     return {
         nickLenOffset: nickLenOffset,
         nickStart: nickStart,
@@ -390,69 +275,14 @@ function parseChatFromArray(arr) {
         msgEnd: msgEnd,
 
         tailOffset: msgEnd,
-        tailLen: arr.length - msgEnd,
+        tailLen: packetLen - msgEnd,
 
         nick: utf8Decode(nickBytes),
         msg: utf8Decode(msgBytes)
     };
 }
 
-function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
-    const packet = ptrToArray(buf, len);
-
-    let sockaddrArray = null;
-    let safeSockaddrLen = 0;
-
-    if (sourceName === "sendto" && sockaddr && !sockaddr.isNull() && sockaddrLen > 0) {
-        sockaddrArray = copySockaddrToArray(sockaddr, sockaddrLen);
-
-        if (sockaddrArray !== null) {
-            safeSockaddrLen = sockaddrLen;
-        }
-    } else if (
-        chatTemplate &&
-        chatTemplate.fd === fd &&
-        chatTemplate.sockaddrArray &&
-        chatTemplate.sockaddrLen > 0
-    ) {
-        sockaddrArray = chatTemplate.sockaddrArray.slice(0);
-        safeSockaddrLen = chatTemplate.sockaddrLen;
-    }
-
-    chatTemplate = {
-        source: sourceName,
-        fd: fd,
-
-        packet: packet,
-        packetLen: packet.length,
-
-        nick: info.nick,
-        lastMessage: info.msg,
-
-        nickLen: info.nickLen,
-        msgLen: info.msgLen,
-        msgLenOffset: info.msgLenOffset,
-        msgStart: info.msgStart,
-        msgEnd: info.msgEnd,
-        tailOffset: info.tailOffset,
-        tailLen: info.tailLen,
-
-        sockaddrArray: sockaddrArray,
-        sockaddrLen: safeSockaddrLen,
-
-        capturedAtMs: nowMs()
-    };
-
-    console.log(
-        "[CHAT TEMPLATE] source=" + sourceName +
-        " fd=" + fd +
-        " len=" + len +
-        " nick=" + quote(info.nick) +
-        " msg=" + quote(info.msg)
-    );
-}
-
-function buildChatMessage(template, newText) {
+function buildChatMessage(template, newText, maxLenBytes) {
     if (!template || !template.packet) {
         throw new Error("template is not captured yet");
     }
@@ -489,22 +319,18 @@ function buildChatMessage(template, newText) {
     const newLen = prefixLen + 2 + msgBytes.length + oldTailLen;
     const out = new Array(newLen);
 
-    
     for (let i = 0; i < prefixLen; i++) {
         out[i] = packet[i] & 0xff;
     }
 
-    
     writeU16BEToArray(out, prefixLen, msgBytes.length);
 
-    
     const newMsgStart = prefixLen + 2;
 
     for (let i = 0; i < msgBytes.length; i++) {
         out[newMsgStart + i] = msgBytes[i] & 0xff;
     }
 
-    
     const newTailStart = newMsgStart + msgBytes.length;
 
     for (let i = 0; i < oldTailLen; i++) {
@@ -517,19 +343,195 @@ function buildChatMessage(template, newText) {
     };
 }
 
-function injectChat(text) {
-    if (!chatTemplate) {
+// agent/src/memory.js
+function ptrToArray(buf, len) {
+    const arr = [];
+
+    for (let i = 0; i < len; i++) {
+        arr.push(buf.add(i).readU8());
+    }
+
+    return arr;
+}
+
+function arrayToMemory(arr) {
+    const p = Memory.alloc(arr.length);
+
+    for (let i = 0; i < arr.length; i++) {
+        p.add(i).writeU8(arr[i] & 0xff);
+    }
+
+    return p;
+}
+
+function copySockaddrToArray(sockaddr, sockaddrLen) {
+    if (!sockaddr || sockaddr.isNull()) return null;
+    if (sockaddrLen <= 0 || sockaddrLen > 128) return null;
+
+    const arr = [];
+
+    try {
+        for (let i = 0; i < sockaddrLen; i++) {
+            arr.push(sockaddr.add(i).readU8());
+        }
+    } catch (e) {
+        console.log("[sockaddr] copy failed: " + e);
+        return null;
+    }
+
+    return arr;
+}
+
+function sockaddrArrayToMemory(arr) {
+    if (!arr || arr.length <= 0) return null;
+    return arrayToMemory(arr);
+}
+
+// agent/src/native.js
+function findExport(name) {
+    try {
+        const p = Module.getGlobalExportByName(name);
+        console.log("[+] found global export: " + name + " -> " + p);
+        return p;
+    } catch (e) {
+        console.log("[-] getGlobalExportByName failed for " + name + ": " + e);
+    }
+
+    try {
+        if (typeof Module.findGlobalExportByName === "function") {
+            const p = Module.findGlobalExportByName(name);
+            if (p && !p.isNull()) {
+                console.log("[+] found global export via findGlobalExportByName: " + name + " -> " + p);
+                return p;
+            }
+        }
+    } catch (_) {}
+
+    try {
+        const libc = Process.getModuleByName("libc.so");
+        if (libc && typeof libc.findExportByName === "function") {
+            const p = libc.findExportByName(name);
+            if (p && !p.isNull()) {
+                console.log("[+] found libc export: " + name + " -> " + p);
+                return p;
+            }
+        }
+    } catch (_) {}
+
+    try {
+        if (typeof Module.findExportByName === "function") {
+            const p = Module.findExportByName("libc.so", name);
+            if (p && !p.isNull()) {
+                console.log("[+] found libc export via Module.findExportByName: " + name + " -> " + p);
+                return p;
+            }
+        }
+    } catch (_) {}
+
+    console.log("[-] export not found: " + name);
+    return null;
+}
+
+function createNativeApi() {
+    const sendPtr = findExport("send");
+    const sendtoPtr = findExport("sendto");
+
+    if (!sendPtr || !sendtoPtr) {
+        throw new Error("send/sendto not found");
+    }
+
+    return {
+        sendPtr: sendPtr,
+        sendtoPtr: sendtoPtr,
+        sendNative: new NativeFunction(sendPtr, "int", [
+            "int",
+            "pointer",
+            "int",
+            "int"
+        ]),
+        sendtoNative: new NativeFunction(sendtoPtr, "int", [
+            "int",
+            "pointer",
+            "int",
+            "int",
+            "pointer",
+            "int"
+        ])
+    };
+}
+
+// agent/src/template.js
+
+function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
+    const packet = ptrToArray(buf, len);
+
+    let sockaddrArray = null;
+    let safeSockaddrLen = 0;
+
+    if (sourceName === "sendto" && sockaddr && !sockaddr.isNull() && sockaddrLen > 0) {
+        sockaddrArray = copySockaddrToArray(sockaddr, sockaddrLen);
+
+        if (sockaddrArray !== null) {
+            safeSockaddrLen = sockaddrLen;
+        }
+    } else if (
+        state.chatTemplate &&
+        state.chatTemplate.fd === fd &&
+        state.chatTemplate.sockaddrArray &&
+        state.chatTemplate.sockaddrLen > 0
+    ) {
+        sockaddrArray = state.chatTemplate.sockaddrArray.slice(0);
+        safeSockaddrLen = state.chatTemplate.sockaddrLen;
+    }
+
+    state.chatTemplate = {
+        source: sourceName,
+        fd: fd,
+
+        packet: packet,
+        packetLen: packet.length,
+
+        nick: info.nick,
+        lastMessage: info.msg,
+
+        nickLen: info.nickLen,
+        msgLen: info.msgLen,
+        msgLenOffset: info.msgLenOffset,
+        msgStart: info.msgStart,
+        msgEnd: info.msgEnd,
+        tailOffset: info.tailOffset,
+        tailLen: info.tailLen,
+
+        sockaddrArray: sockaddrArray,
+        sockaddrLen: safeSockaddrLen,
+
+        capturedAtMs: nowMs()
+    };
+
+    console.log(
+        "[CHAT TEMPLATE] source=" + sourceName +
+        " fd=" + fd +
+        " len=" + len +
+        " nick=" + quote(info.nick) +
+        " msg=" + quote(info.msg)
+    );
+}
+
+// agent/src/injector.js
+
+function injectChat(text, nativeApi) {
+    if (!state.chatTemplate) {
         throw new Error("template is not captured yet");
     }
 
     const currentMs = nowMs();
-    const elapsed = currentMs - lastInjectAtMs;
+    const elapsed = currentMs - state.lastInjectAtMs;
 
-    if (rateLimitMs > 0 && elapsed < rateLimitMs) {
-        throw new Error("rate-limit: wait " + (rateLimitMs - elapsed) + " ms");
+    if (state.rateLimitMs > 0 && elapsed < state.rateLimitMs) {
+        throw new Error("rate-limit: wait " + (state.rateLimitMs - elapsed) + " ms");
     }
 
-    const built = buildChatMessage(chatTemplate, text);
+    const built = buildChatMessage(state.chatTemplate, text, state.maxLenBytes);
     const packet = built.packet;
 
     const packetPtr = arrayToMemory(packet);
@@ -537,41 +539,41 @@ function injectChat(text) {
     let via = "send";
     let r = -1;
 
-    injecting = true;
+    state.injecting = true;
 
     try {
         if (
-            chatTemplate.sockaddrArray &&
-            chatTemplate.sockaddrLen > 0
+            state.chatTemplate.sockaddrArray &&
+            state.chatTemplate.sockaddrLen > 0
         ) {
-            const sockaddrPtr = sockaddrArrayToMemory(chatTemplate.sockaddrArray);
+            const sockaddrPtr = sockaddrArrayToMemory(state.chatTemplate.sockaddrArray);
 
             via = "sendto";
-            r = sendtoNative(
-                chatTemplate.fd,
+            r = nativeApi.sendtoNative(
+                state.chatTemplate.fd,
                 packetPtr,
                 packet.length,
                 0,
                 sockaddrPtr,
-                chatTemplate.sockaddrLen
+                state.chatTemplate.sockaddrLen
             );
         } else {
             via = "send";
-            r = sendNative(
-                chatTemplate.fd,
+            r = nativeApi.sendNative(
+                state.chatTemplate.fd,
                 packetPtr,
                 packet.length,
                 0
             );
         }
     } catch (e) {
-        injecting = false;
+        state.injecting = false;
         console.log("[INJECT] error: " + e);
         throw e;
     }
 
-    injecting = false;
-    lastInjectAtMs = currentMs;
+    state.injecting = false;
+    state.lastInjectAtMs = currentMs;
 
     console.log(
         "[INJECT] text=" + quote(text) +
@@ -590,8 +592,10 @@ function injectChat(text) {
     };
 }
 
+// agent/src/hooks.js
+
 function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen) {
-    if (injecting) return false;
+    if (state.injecting) return false;
     if (len <= 0 || len > MAX_PACKET_LEN) return false;
 
     const info = parseChatFromPtr(buf, len);
@@ -604,106 +608,121 @@ function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen) {
     return true;
 }
 
-Interceptor.attach(sendtoPtr, {
-    onEnter(args) {
-        const fd = args[0].toInt32();
-        const buf = args[1];
-        const len = args[2].toInt32();
-        const sockaddr = args[4];
-        const sockaddrLen = args[5].toInt32();
+function installHooks(nativeApi) {
+    Interceptor.attach(nativeApi.sendtoPtr, {
+        onEnter(args) {
+            const fd = args[0].toInt32();
+            const buf = args[1];
+            const len = args[2].toInt32();
+            const sockaddr = args[4];
+            const sockaddrLen = args[5].toInt32();
 
-        handleChatPacket("sendto", fd, buf, len, sockaddr, sockaddrLen);
-    }
-});
-
-console.log("[+] sendto hooked");
-
-Interceptor.attach(sendPtr, {
-    onEnter(args) {
-        const fd = args[0].toInt32();
-        const buf = args[1];
-        const len = args[2].toInt32();
-
-        handleChatPacket("send", fd, buf, len, null, 0);
-    }
-});
-
-console.log("[+] send hooked");
-
-rpc.exports = {
-    status() {
-        return {
-            templateCaptured: chatTemplate !== null,
-            fd: chatTemplate ? chatTemplate.fd : null,
-            nick: chatTemplate ? chatTemplate.nick : null,
-            lastMessage: chatTemplate ? chatTemplate.lastMessage : null,
-            templateLen: chatTemplate ? chatTemplate.packetLen : null,
-            hasSockaddr: !!(
-                chatTemplate &&
-                chatTemplate.sockaddrArray &&
-                chatTemplate.sockaddrLen > 0
-            ),
-            maxLenBytes: maxLenBytes,
-            rateLimitMs: rateLimitMs
-        };
-    },
-
-    sendchat(text) {
-        return injectChat(String(text));
-    },
-
-    setmaxlen(n) {
-        const value = parseInt(n, 10);
-
-        if (!isFinite(value) || value <= 0) {
-            throw new Error("maxLenBytes must be positive integer");
+            handleChatPacket("sendto", fd, buf, len, sockaddr, sockaddrLen);
         }
+    });
 
-        if (value > HARD_MAX_MESSAGE_BYTES) {
-            throw new Error(
-                "maxLenBytes too large: " +
-                value +
-                ", hardMax=" +
-                HARD_MAX_MESSAGE_BYTES
-            );
+    console.log("[+] sendto hooked");
+
+    Interceptor.attach(nativeApi.sendPtr, {
+        onEnter(args) {
+            const fd = args[0].toInt32();
+            const buf = args[1];
+            const len = args[2].toInt32();
+
+            handleChatPacket("send", fd, buf, len, null, 0);
         }
+    });
 
-        maxLenBytes = value;
-        console.log("[CONFIG] maxLenBytes=" + maxLenBytes);
+    console.log("[+] send hooked");
+}
 
-        return {
-            ok: true,
-            maxLenBytes: maxLenBytes
-        };
-    },
+// agent/src/rpc.js
 
-    setratems(n) {
-        const value = parseInt(n, 10);
+function installRpc(nativeApi) {
+    rpc.exports = {
+        status() {
+            return {
+                templateCaptured: state.chatTemplate !== null,
+                fd: state.chatTemplate ? state.chatTemplate.fd : null,
+                nick: state.chatTemplate ? state.chatTemplate.nick : null,
+                lastMessage: state.chatTemplate ? state.chatTemplate.lastMessage : null,
+                templateLen: state.chatTemplate ? state.chatTemplate.packetLen : null,
+                hasSockaddr: !!(
+                    state.chatTemplate &&
+                    state.chatTemplate.sockaddrArray &&
+                    state.chatTemplate.sockaddrLen > 0
+                ),
+                maxLenBytes: state.maxLenBytes,
+                rateLimitMs: state.rateLimitMs
+            };
+        },
 
-        if (!isFinite(value) || value < 0) {
-            throw new Error("rateLimitMs must be integer >= 0");
+        sendchat(text) {
+            return injectChat(String(text), nativeApi);
+        },
+
+        setmaxlen(n) {
+            const value = parseInt(n, 10);
+
+            if (!isFinite(value) || value <= 0) {
+                throw new Error("maxLenBytes must be positive integer");
+            }
+
+            if (value > HARD_MAX_MESSAGE_BYTES) {
+                throw new Error(
+                    "maxLenBytes too large: " +
+                    value +
+                    ", hardMax=" +
+                    HARD_MAX_MESSAGE_BYTES
+                );
+            }
+
+            state.maxLenBytes = value;
+            console.log("[CONFIG] maxLenBytes=" + state.maxLenBytes);
+
+            return {
+                ok: true,
+                maxLenBytes: state.maxLenBytes
+            };
+        },
+
+        setratems(n) {
+            const value = parseInt(n, 10);
+
+            if (!isFinite(value) || value < 0) {
+                throw new Error("rateLimitMs must be integer >= 0");
+            }
+
+            state.rateLimitMs = value;
+            console.log("[CONFIG] rateLimitMs=" + state.rateLimitMs);
+
+            return {
+                ok: true,
+                rateLimitMs: state.rateLimitMs
+            };
+        },
+
+        clear() {
+            state.chatTemplate = null;
+            state.lastInjectAtMs = 0;
+
+            console.log("[CONFIG] template cleared");
+
+            return {
+                ok: true
+            };
         }
+    };
+}
 
-        rateLimitMs = value;
-        console.log("[CONFIG] rateLimitMs=" + rateLimitMs);
+// agent/src/main.js
 
-        return {
-            ok: true,
-            rateLimitMs: rateLimitMs
-        };
-    },
+const nativeApi = createNativeApi();
 
-    clear() {
-        chatTemplate = null;
-        lastInjectAtMs = 0;
-
-        console.log("[CONFIG] template cleared");
-
-        return {
-            ok: true
-        };
-    }
-};
+installHooks(nativeApi);
+installRpc(nativeApi);
 
 console.log("[*] chat injector loaded");
 console.log("[*] Send any message in real Nebulous.io chat to capture template.");
+
+})();

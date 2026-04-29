@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from .console import print_help, print_info, print_ok, print_warn
+
+
+class CommandResult(Enum):
+    HANDLED = "handled"
+    EXIT = "exit"
+    MESSAGE = "message"
+
+
+@dataclass
+class CommandContext:
+    rpc: Any
+    reset_local_rate_limit: Any
+
+
+def pretty_status(st: dict[str, Any]) -> str:
+    return json.dumps(st, ensure_ascii=False, indent=2)
+
+
+def get_status_safe(rpc: Any) -> dict[str, Any]:
+    try:
+        return dict(rpc.status())
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось получить status(): {exc}") from exc
+
+
+def handle_command(text: str, ctx: CommandContext) -> CommandResult:
+    if text in ("/exit", "/quit"):
+        return CommandResult.EXIT
+
+    if text == "/help":
+        print_help()
+        return CommandResult.HANDLED
+
+    if text == "/status":
+        try:
+            st = get_status_safe(ctx.rpc)
+            print(pretty_status(st))
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(str(exc))
+        return CommandResult.HANDLED
+
+    if text.startswith("/max"):
+        parts = text.split(maxsplit=1)
+        if len(parts) != 2:
+            print_warn("Формат: /max 128")
+            return CommandResult.HANDLED
+
+        try:
+            result = ctx.rpc.setmaxlen(int(parts[1]))
+            print_ok(f"maxLenBytes={result.get('maxLenBytes')}")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"setmaxlen failed: {exc}")
+        return CommandResult.HANDLED
+
+    if text.startswith("/rate"):
+        parts = text.split(maxsplit=1)
+        if len(parts) != 2:
+            print_warn("Формат: /rate 1000")
+            return CommandResult.HANDLED
+
+        try:
+            result = ctx.rpc.setratems(int(parts[1]))
+            print_ok(f"rateLimitMs={result.get('rateLimitMs')}")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"setratems failed: {exc}")
+        return CommandResult.HANDLED
+
+    if text == "/clear":
+        try:
+            ctx.rpc.clear()
+            ctx.reset_local_rate_limit()
+            print_ok("Template cleared.")
+            print_info("Отправь любое сообщение вручную в игровом чате, чтобы поймать новый template.")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"clear failed: {exc}")
+        return CommandResult.HANDLED
+
+    if text.startswith("/"):
+        print_warn("Неизвестная команда. Напиши /help.")
+        return CommandResult.HANDLED
+
+    return CommandResult.MESSAGE

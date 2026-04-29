@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "scripts": {
+    "build:agent": "esbuild agent/src/main.js --bundle --format=iife --target=es2019 --outfile=chat_injector_agent.js",
+    "test:js": "node --test tests/js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

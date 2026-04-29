@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nebulous_chat_cli.main import main
+from .main import main
 
 
 if __name__ == "__main__":
