@@ -39,7 +39,7 @@ class AdbBootstrapTests(unittest.TestCase):
 
         self.assertFalse(result.frida_server_started)
         self.assertNotIn(
-            ("adb", "-s", SERIAL, "shell", "su", "-c", f"nohup {SERVER_PATH} >/dev/null 2>&1 &"),
+            ("adb", "-s", SERIAL, "shell", f"su -c 'nohup {SERVER_PATH} >/dev/null 2>&1 &'"),
             runner.commands,
         )
 
@@ -60,11 +60,11 @@ class AdbBootstrapTests(unittest.TestCase):
         self.assertEqual(runner.commands[1], ("adb", "connect", SERIAL))
         self.assertEqual(runner.commands[2], ("adb", "-s", SERIAL, "wait-for-device"))
         self.assertIn(
-            ("adb", "-s", SERIAL, "shell", "su", "-c", "pidof frida-server"),
+            ("adb", "-s", SERIAL, "shell", "su -c 'pidof frida-server'"),
             runner.commands,
         )
         self.assertIn(
-            ("adb", "-s", SERIAL, "shell", "su", "-c", f"nohup {SERVER_PATH} >/dev/null 2>&1 &"),
+            ("adb", "-s", SERIAL, "shell", f"su -c 'nohup {SERVER_PATH} >/dev/null 2>&1 &'"),
             runner.commands,
         )
 

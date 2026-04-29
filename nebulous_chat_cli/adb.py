@@ -170,7 +170,8 @@ def adb_shell_su(
     runner: AdbRunner,
     timeout: float,
 ) -> AdbCommandResult:
-    return runner(("adb", "-s", serial, "shell", "su", "-c", shell_command), timeout)
+    remote_command = f"su -c {shlex.quote(shell_command)}"
+    return runner(("adb", "-s", serial, "shell", remote_command), timeout)
 
 
 def raise_for_su_error(result: AdbCommandResult) -> None:
