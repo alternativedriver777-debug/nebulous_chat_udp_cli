@@ -11,6 +11,9 @@ export function installRpc(nativeApi) {
                 nick: state.chatTemplate ? state.chatTemplate.nick : null,
                 lastMessage: state.chatTemplate ? state.chatTemplate.lastMessage : null,
                 templateLen: state.chatTemplate ? state.chatTemplate.packetLen : null,
+                recvEnabled: state.recvEnabled,
+                incomingCount: state.incomingCount || 0,
+                lastIncoming: state.lastIncoming,
                 hasSockaddr: !!(
                     state.chatTemplate &&
                     state.chatTemplate.sockaddrArray &&
@@ -64,6 +67,20 @@ export function installRpc(nativeApi) {
                 ok: true,
                 rateLimitMs: state.rateLimitMs
             };
+        },
+
+        setrecv(enabled) {
+            state.recvEnabled = !!enabled;
+            console.log("[CONFIG] recvEnabled=" + state.recvEnabled);
+            return { ok: true, recvEnabled: state.recvEnabled };
+        },
+
+        clearrecv() {
+            state.incomingCount = 0;
+            state.lastIncoming = null;
+            state.incomingDedupe = {};
+            console.log("[CONFIG] incoming chat state cleared");
+            return { ok: true };
         },
 
         clear() {

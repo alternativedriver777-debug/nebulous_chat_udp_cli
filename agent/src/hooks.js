@@ -2,6 +2,7 @@ import { MAX_PACKET_LEN } from "./constants.js";
 import { parseChatFromPtr } from "./packet.js";
 import { state } from "./state.js";
 import { saveTemplate } from "./template.js";
+import { handleIncomingPacket } from "./receiver.js";
 
 export function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen) {
     if (state.injecting) return false;
@@ -43,4 +44,46 @@ export function installHooks(nativeApi) {
     });
 
     console.log("[+] send hooked");
+
+    if (nativeApi.recvfromPtr) {
+        Interceptor.attach(nativeApi.recvfromPtr, {
+            onEnter(args) {
+                this.fd = args[0].toInt32();
+                this.buf = args[1];
+            },
+
+            onLeave(retval) {
+                const len = retval.toInt32();
+
+                if (len <= 0) return;
+
+                handleIncomingPacket("recvfrom", this.fd, this.buf, len);
+            }
+        });
+
+        console.log("[+] recvfrom hooked");
+    } else {
+        console.log("[!] recvfrom not hooked: pointer is null");
+    }
+
+    if (nativeApi.recvPtr) {
+        Interceptor.attach(nativeApi.recvPtr, {
+            onEnter(args) {
+                this.fd = args[0].toInt32();
+                this.buf = args[1];
+            },
+
+            onLeave(retval) {
+                const len = retval.toInt32();
+
+                if (len <= 0) return;
+
+                handleIncomingPacket("recv", this.fd, this.buf, len);
+            }
+        });
+
+        console.log("[+] recv hooked");
+    } else {
+        console.log("[!] recv not hooked: pointer is null");
+    }
 }

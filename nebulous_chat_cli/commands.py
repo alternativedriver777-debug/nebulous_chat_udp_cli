@@ -91,6 +91,36 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
             print_error(f"clear failed: {exc}")
         return CommandResult.HANDLED
 
+    if text.startswith("/recv"):
+        parts = text.split(maxsplit=1)
+
+        if len(parts) != 2 or parts[1] not in ("on", "off"):
+            print_warn("Формат: /recv on или /recv off")
+            return CommandResult.HANDLED
+
+        enabled = parts[1] == "on"
+
+        try:
+            result = ctx.rpc.setrecv(enabled)
+            print_ok(f"recvEnabled={result.get('recvEnabled')}")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"setrecv failed: {exc}")
+
+        return CommandResult.HANDLED
+
+    if text == "/clearrecv":
+        try:
+            ctx.rpc.clearrecv()
+            print_ok("Incoming chat state cleared.")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"clearrecv failed: {exc}")
+
+        return CommandResult.HANDLED
+
     if text.startswith("/"):
         print_warn("Неизвестная команда. Напиши /help.")
         return CommandResult.HANDLED
