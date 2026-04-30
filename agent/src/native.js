@@ -45,14 +45,22 @@ export function findExport(name) {
 export function createNativeApi() {
     const sendPtr = findExport("send");
     const sendtoPtr = findExport("sendto");
+    const recvPtr = findExport("recv");
+    const recvfromPtr = findExport("recvfrom");
 
     if (!sendPtr || !sendtoPtr) {
         throw new Error("send/sendto not found");
     }
 
+    if (!recvPtr && !recvfromPtr) {
+        console.log("[!] recv/recvfrom not found; incoming chat will be disabled");
+    }
+
     return {
         sendPtr: sendPtr,
         sendtoPtr: sendtoPtr,
+        recvPtr: recvPtr,
+        recvfromPtr: recvfromPtr,
         sendNative: new NativeFunction(sendPtr, "int", [
             "int",
             "pointer",

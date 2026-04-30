@@ -1,9 +1,8 @@
-import { MAX_PACKET_LEN } from "./constants.js";
+import { CHAT_OPCODE, MAX_PACKET_LEN } from "./constants.js";
 import { parseChatFromPtr } from "./packet.js";
 import { state } from "./state.js";
 import { quote } from "./utils.js";
 
-const CHAT_OPCODE = 0x89;
 const DEDUPE_TTL_MS = 1200;
 
 function readU32BEFromPtr(p) {

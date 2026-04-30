@@ -3,15 +3,19 @@ from __future__ import annotations
 
 HELP_TEXT = """
 Commands:
-  /status        показать состояние template/fd/nick/rate/max
+  /status        показать состояние template/fd/nick/rate/max/recv
   /max 128       установить maxLenBytes
   /rate 1000     установить rate-limit в миллисекундах
+  /recv on       включить отображение входящего чата
+  /recv off      выключить отображение входящего чата
+  /clearrecv     сбросить счётчик входящих сообщений
   /clear         сбросить пойманный template
   /help          показать помощь
   /exit          выйти
   /quit          выйти
 
 Обычный текст без "/" отправляется в чат через Frida RPC.
+Входящие сообщения печатаются автоматически, если recvEnabled=true.
 
 Порядок:
   1) Зайди в комнату Nebulous.io.

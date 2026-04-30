@@ -17,6 +17,8 @@ class FakeRpc:
         self.max_len = None
         self.rate_ms = None
         self.cleared = False
+        self.recv_enabled = None
+        self.recv_cleared = False
 
     def status(self) -> dict[str, object]:
         return {
@@ -35,6 +37,14 @@ class FakeRpc:
 
     def clear(self) -> dict[str, object]:
         self.cleared = True
+        return {"ok": True}
+
+    def setrecv(self, enabled: bool) -> dict[str, object]:
+        self.recv_enabled = enabled
+        return {"ok": True, "recvEnabled": enabled}
+
+    def clearrecv(self) -> dict[str, object]:
+        self.recv_cleared = True
         return {"ok": True}
 
 
@@ -85,6 +95,26 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(result, CommandResult.HANDLED)
         self.assertTrue(rpc.cleared)
         self.assertEqual(resets, [True])
+
+    def test_recv_command_updates_rpc(self) -> None:
+        rpc = FakeRpc()
+        ctx, _ = self.make_context(rpc)
+
+        with redirect_stdout(io.StringIO()):
+            result = handle_command("/recv off", ctx)
+
+        self.assertEqual(result, CommandResult.HANDLED)
+        self.assertEqual(rpc.recv_enabled, False)
+
+    def test_clearrecv_command_updates_rpc(self) -> None:
+        rpc = FakeRpc()
+        ctx, _ = self.make_context(rpc)
+
+        with redirect_stdout(io.StringIO()):
+            result = handle_command("/clearrecv", ctx)
+
+        self.assertEqual(result, CommandResult.HANDLED)
+        self.assertTrue(rpc.recv_cleared)
 
     def test_unknown_slash_command_is_handled(self) -> None:
         ctx, _ = self.make_context()
