@@ -35,12 +35,10 @@ export function parseChatFromPtr(buf, len) {
         const nickEnd = nickStart + nickLen;
 
         if (nickLen < 0 || nickLen > 1024) {
-            console.log("[CHAT] invalid nickLen=" + nickLen + " len=" + len);
             return null;
         }
 
         if (nickEnd + 2 > len) {
-            console.log("[CHAT] nickLen out of bounds=" + nickLen + " len=" + len);
             return null;
         }
 
@@ -50,12 +48,10 @@ export function parseChatFromPtr(buf, len) {
         const msgEnd = msgStart + msgLen;
 
         if (msgLen < 0 || msgLen > 4096) {
-            console.log("[CHAT] invalid msgLen=" + msgLen + " len=" + len);
             return null;
         }
 
         if (msgEnd > len) {
-            console.log("[CHAT] msgLen out of bounds=" + msgLen + " len=" + len);
             return null;
         }
 
