@@ -603,6 +603,8 @@ function injectChat(text, nativeApi) {
 // agent/src/receiver.js
 
 const DEDUPE_TTL_MS = 1200;
+const MAX_INCOMING_NICK_BYTES = 64;
+const MAX_INCOMING_MESSAGE_BYTES = 512;
 
 function readU32BEFromPtr(p) {
     return (
@@ -645,6 +647,38 @@ function isDuplicateIncoming(key) {
     }
 
     return now - last < DEDUPE_TTL_MS;
+}
+
+function hasControlChars(s) {
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isCleanChatText(s) {
+    return (
+        typeof s === "string" &&
+        s.length > 0 &&
+        s.indexOf("\ufffd") === -1 &&
+        !hasControlChars(s)
+    );
+}
+
+function isLikelyIncomingChat(info) {
+    return (
+        info.nickLen > 0 &&
+        info.nickLen <= MAX_INCOMING_NICK_BYTES &&
+        info.msgLen > 0 &&
+        info.msgLen <= MAX_INCOMING_MESSAGE_BYTES &&
+        isCleanChatText(info.nick) &&
+        isCleanChatText(info.msg)
+    );
 }
 
 function emitChatMessage(sourceName, fd, buf, len, offset, info) {
@@ -695,16 +729,6 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
             info.msg
     });
 
-    console.log(
-        "[CHAT IN] source=" + sourceName +
-        " fd=" + fd +
-        " len=" + len +
-        " off=0x" + offset.toString(16) +
-        " id=" + idHex +
-        " nick=" + quote(info.nick) +
-        " msg=" + quote(info.msg)
-    );
-
     return true;
 }
 
@@ -722,6 +746,10 @@ function handleIncomingPacket(sourceName, fd, buf, len) {
         const info = parseChatFromPtr(buf.add(offset), len - offset);
 
         if (!info) {
+            continue;
+        }
+
+        if (!isLikelyIncomingChat(info)) {
             continue;
         }
 
