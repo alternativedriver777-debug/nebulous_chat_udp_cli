@@ -1,12 +1,14 @@
-# Nebulous.io Chat Injector
+# Nebulous.io UDP Chat CLI
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/0dd68859-74e2-40b1-b492-e29604f27557" width="70%" />
 </p>
 
-A CLI tool for sending messages to the Nebulous.io chat through Frida.
+A CLI tool for sending and receiving Nebulous.io chat messages through Frida.
 
-The Frida agent first intercepts a real UDP chat packet from the game and stores it as a template. After that, the CLI can build new chat packets from the same client network context and send them through `sendto` or `send`.
+The Frida agent first intercepts a real outgoing UDP chat packet from the game and stores it as a template. After that, the CLI can build new chat packets from the same client network context and send them through `sendto` or `send`.
+
+The same agent also hooks `recvfrom` and `recv` so incoming chat packets can be parsed and printed in the CLI in real time.
 
 ## Requirements
 
@@ -104,12 +106,22 @@ python chat_cli.py --adb 127.0.0.1:62001
 > yoo how are you
 ```
 
+Incoming chat messages are printed automatically while the CLI is running:
+
+```text
+[CHAT] [0xf2741933] Rush: hello
+[CHAT] [0x91aabb20] OtherPlayer: hi
+```
+
 ## CLI Commands
 
 ```text
-/status        show the template/fd/nick/rate/max state
+/status        show the template/fd/nick/rate/max/recv state
 /max 128       set maxLenBytes
 /rate 1000     set the rate limit in milliseconds
+/recv on       enable incoming chat display
+/recv off      disable incoming chat display
+/clearrecv     clear incoming chat counters and dedupe state
 /clear         clear the captured template
 /help          show help
 /exit          exit
@@ -117,6 +129,34 @@ python chat_cli.py --adb 127.0.0.1:62001
 ```
 
 Plain text without a leading `/` is sent to the chat through Frida RPC.
+
+Incoming chat display is enabled by default. Use `/recv off` if you only want to send messages and keep the terminal quiet.
+
+## Receiving Chat Messages
+
+The agent hooks `recvfrom` and `recv` in addition to `sendto` and `send`. Because receive buffers are filled after the native function returns, incoming packets are parsed in the hook `onLeave` handler.
+
+Incoming packets with opcode `0x89` are parsed using the same chat packet structure:
+
+```text
+0x00    opcode (0x89)
+0x01-04 sender/session-related field
+0x05-06 nickLen (u16 BE)
+...     nickname bytes
+...     msgLen (u16 BE)
+...     message bytes
+...     tail
+```
+
+The field after the opcode is shown as a hex identifier, for example:
+
+```text
+[CHAT] [0xf2741933] Rush: hello
+```
+
+It is intentionally not named `playerId` yet. It may be sender-related, session-related, room-local, or server routing data.
+
+To avoid false positives from unrelated binary UDP packets, the receiver filters parsed candidates before printing them. Nicknames and messages must look like clean UTF-8 chat text, and obviously binary strings are ignored.
 
 ## Project Structure
 
@@ -144,9 +184,11 @@ The Frida agent hooks these system functions:
 ```text
 send
 sendto
+recv
+recvfrom
 ```
 
-When the game sends a UDP packet, the agent checks:
+When the game sends or receives a UDP packet, the agent checks:
 
 ```text
 packet[0] == 0x89
@@ -172,7 +214,7 @@ Strings are stored as:
 u16 (big-endian) + UTF-8 bytes
 ```
 
-The new packet is sent through the same socket:
+For outgoing messages, the new packet is sent through the same socket:
 
 ```text
 sendto(fd, ...)   // when sockaddr is available
