@@ -33,9 +33,26 @@ test("parseChatFromArray reads nickname, message, and tail", () => {
     const packet = makePacket("nick", "hello", [0xaa, 0xbb]);
     const info = parseChatFromArray(packet);
 
+    assert.equal(info.publicId, 0x01020304);
+    assert.equal(info.accountId, null);
     assert.equal(info.nick, "nick");
     assert.equal(info.msg, "hello");
     assert.equal(info.tailLen, 2);
+});
+
+test("parseChatFromArray reads signed account id after message", () => {
+    const packet = makePacket("nick", "hello", [0x00, 0x01, 0xe2, 0x40, 0x01]);
+    const info = parseChatFromArray(packet);
+
+    assert.equal(info.accountId, 123456);
+    assert.equal(info.accountIdOffset, info.msgEnd);
+});
+
+test("parseChatFromArray preserves negative account id marker", () => {
+    const packet = makePacket("nick", "hello", [0xff, 0xff, 0xff, 0xff, 0x00]);
+    const info = parseChatFromArray(packet);
+
+    assert.equal(info.accountId, -1);
 });
 
 test("buildChatMessage replaces message and preserves tail", () => {

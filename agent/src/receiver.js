@@ -6,22 +6,14 @@ const DEDUPE_TTL_MS = 1200;
 const MAX_INCOMING_NICK_BYTES = 64;
 const MAX_INCOMING_MESSAGE_BYTES = 512;
 
-function readU32BEFromPtr(p) {
-    return (
-        ((p.readU8() & 0xff) << 24) |
-        ((p.add(1).readU8() & 0xff) << 16) |
-        ((p.add(2).readU8() & 0xff) << 8) |
-        (p.add(3).readU8() & 0xff)
-    ) >>> 0;
-}
-
 function hexU32(v) {
     return "0x" + ("00000000" + (v >>> 0).toString(16)).slice(-8);
 }
 
-function makeDedupeKey(info, idHex, packetLen, offset) {
+function makeDedupeKey(info, playerIdText, publicIdHex, packetLen, offset) {
     return [
-        idHex,
+        playerIdText,
+        publicIdHex,
         info.nick,
         info.msg,
         info.msgLen,
@@ -82,16 +74,11 @@ function isLikelyIncomingChat(info) {
 }
 
 function emitChatMessage(sourceName, fd, buf, len, offset, info) {
-    let idValue = 0;
-
-    try {
-        idValue = readU32BEFromPtr(buf.add(offset + 1));
-    } catch (_) {
-        idValue = 0;
-    }
-
-    const idHex = hexU32(idValue);
-    const dedupeKey = makeDedupeKey(info, idHex, len, offset);
+    const publicId = info.publicId === null || info.publicId === undefined ? 0 : info.publicId;
+    const publicIdHex = hexU32(publicId);
+    const playerId = info.accountId;
+    const playerIdText = playerId === null ? "unknown" : String(playerId);
+    const dedupeKey = makeDedupeKey(info, playerIdText, publicIdHex, len, offset);
 
     if (isDuplicate(dedupeKey)) {
         return true;
@@ -104,8 +91,12 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
         packetLen: len,
         offset: offset,
 
-        id: idValue,
-        idHex: idHex,
+        id: playerId,
+        playerId: playerId,
+        accountId: playerId,
+        displayId: playerIdText,
+        publicId: publicId,
+        publicIdHex: publicIdHex,
 
         nick: info.nick,
         message: info.msg,
@@ -123,7 +114,7 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
         payload: event,
         line:
             "[CHAT] " +
-            "[" + idHex + "] " +
+            "[" + playerIdText + "] " +
             info.nick +
             ": " +
             info.msg

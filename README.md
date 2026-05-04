@@ -109,8 +109,8 @@ python chat_cli.py --adb 127.0.0.1:62001
 Incoming chat messages are printed automatically while the CLI is running:
 
 ```text
-[CHAT] [0xf2741933] Rush: hello
-[CHAT] [0x91aabb20] OtherPlayer: hi
+[CHAT] [123456] Rush: hello
+[CHAT] [987654] OtherPlayer: hi
 ```
 
 ## CLI Commands
@@ -139,22 +139,21 @@ The agent hooks `recvfrom` and `recv` in addition to `sendto` and `send`. Becaus
 Incoming packets with opcode `0x89` are parsed using the same chat packet structure:
 
 ```text
-0x00    opcode (0x89)
-0x01-04 sender/session-related field
-0x05-06 nickLen (u16 BE)
-...     nickname bytes
-...     msgLen (u16 BE)
-...     message bytes
+u8      opcode (0x89)
+u32be   public_id
+MUTF8   alias
+MUTF8   message
+i32be   account_id / -1
 ...     tail
 ```
 
-The field after the opcode is shown as a hex identifier, for example:
+The `account_id` field after the message is shown as the player identifier, for example:
 
 ```text
-[CHAT] [0xf2741933] Rush: hello
+[CHAT] [123456] Rush: hello
 ```
 
-It is intentionally not named `playerId` yet. It may be sender-related, session-related, room-local, or server routing data.
+The earlier `public_id` field is still kept in the internal event payload as `publicId` / `publicIdHex` for debugging.
 
 To avoid false positives from unrelated binary UDP packets, the receiver filters parsed candidates before printing them. Nicknames and messages must look like clean UTF-8 chat text, and obviously binary strings are ignored.
 
@@ -199,13 +198,19 @@ This is the chat packet opcode.
 After detection, the packet is parsed as:
 
 ```text
-0x00    opcode (0x89)
-0x01-04 session / unknown bytes
-0x05-06 nickLen (u16 BE)
-...     nickname
-...     msgLen (u16 BE)
-...     message
-...     tail (service data)
+u8      opcode (0x89)
+u32be   public_id
+MUTF8   alias
+MUTF8   message
+i32be   account_id / -1
+bool    unknown
+i64be   message_id
+vararr  alias_colors
+bool    show_broadcast_bubble
+u8      alias_font
+u32be   client_id
+bool    false
+bool    false
 ```
 
 Strings are stored as:

@@ -170,6 +170,37 @@ function readU16BEFromArray(arr, off) {
     return ((arr[off] & 0xff) << 8) | (arr[off + 1] & 0xff);
 }
 
+function readU32BEFromPtr(p) {
+    return (
+        ((p.readU8() & 0xff) << 24) |
+        ((p.add(1).readU8() & 0xff) << 16) |
+        ((p.add(2).readU8() & 0xff) << 8) |
+        (p.add(3).readU8() & 0xff)
+    ) >>> 0;
+}
+
+function readI32BEFromPtr(p) {
+    return (
+        ((p.readU8() & 0xff) << 24) |
+        ((p.add(1).readU8() & 0xff) << 16) |
+        ((p.add(2).readU8() & 0xff) << 8) |
+        (p.add(3).readU8() & 0xff)
+    );
+}
+
+function readI32BEFromArray(arr, off) {
+    return (
+        ((arr[off] & 0xff) << 24) |
+        ((arr[off + 1] & 0xff) << 16) |
+        ((arr[off + 2] & 0xff) << 8) |
+        (arr[off + 3] & 0xff)
+    );
+}
+
+function readU32BEFromArray(arr, off) {
+    return readI32BEFromArray(arr, off) >>> 0;
+}
+
 function writeU16BEToArray(arr, off, v) {
     arr[off] = (v >> 8) & 0xff;
     arr[off + 1] = v & 0xff;
@@ -224,7 +255,14 @@ function parseChatFromPtr(buf, len) {
             msgBytes.push(buf.add(msgStart + i).readU8());
         }
 
-        return makeChatInfo(len, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+        const publicId = readU32BEFromPtr(buf.add(1));
+        let accountId = null;
+
+        if (msgEnd + 4 <= len) {
+            accountId = readI32BEFromPtr(buf.add(msgEnd));
+        }
+
+        return makeChatInfo(len, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
 
     } catch (e) {
         console.log("[CHAT] parseChatFromPtr error: " + e);
@@ -256,14 +294,21 @@ function parseChatFromArray(arr) {
     const nickBytes = arr.slice(nickStart, nickEnd);
     const msgBytes = arr.slice(msgStart, msgEnd);
 
-    return makeChatInfo(arr.length, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+    const publicId = readU32BEFromArray(arr, 1);
+    const accountId = msgEnd + 4 <= arr.length ? readI32BEFromArray(arr, msgEnd) : null;
+
+    return makeChatInfo(arr.length, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
 }
 
-function makeChatInfo(packetLen, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
+function makeChatInfo(packetLen, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
     const nickEnd = nickStart + nickLen;
     const msgEnd = msgStart + msgLen;
 
     return {
+        publicId: publicId,
+        accountId: accountId,
+        accountIdOffset: msgEnd,
+
         nickLenOffset: nickLenOffset,
         nickStart: nickStart,
         nickLen: nickLen,
@@ -606,22 +651,14 @@ const DEDUPE_TTL_MS = 1200;
 const MAX_INCOMING_NICK_BYTES = 64;
 const MAX_INCOMING_MESSAGE_BYTES = 512;
 
-function readU32BEFromPtr(p) {
-    return (
-        ((p.readU8() & 0xff) << 24) |
-        ((p.add(1).readU8() & 0xff) << 16) |
-        ((p.add(2).readU8() & 0xff) << 8) |
-        (p.add(3).readU8() & 0xff)
-    ) >>> 0;
-}
-
 function hexU32(v) {
     return "0x" + ("00000000" + (v >>> 0).toString(16)).slice(-8);
 }
 
-function makeDedupeKey(info, idHex, packetLen, offset) {
+function makeDedupeKey(info, playerIdText, publicIdHex, packetLen, offset) {
     return [
-        idHex,
+        playerIdText,
+        publicIdHex,
         info.nick,
         info.msg,
         info.msgLen,
@@ -682,16 +719,11 @@ function isLikelyIncomingChat(info) {
 }
 
 function emitChatMessage(sourceName, fd, buf, len, offset, info) {
-    let idValue = 0;
-
-    try {
-        idValue = readU32BEFromPtr(buf.add(offset + 1));
-    } catch (_) {
-        idValue = 0;
-    }
-
-    const idHex = hexU32(idValue);
-    const dedupeKey = makeDedupeKey(info, idHex, len, offset);
+    const publicId = info.publicId === null || info.publicId === undefined ? 0 : info.publicId;
+    const publicIdHex = hexU32(publicId);
+    const playerId = info.accountId;
+    const playerIdText = playerId === null ? "unknown" : String(playerId);
+    const dedupeKey = makeDedupeKey(info, playerIdText, publicIdHex, len, offset);
 
     if (isDuplicateIncoming(dedupeKey)) {
         return true;
@@ -704,8 +736,12 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
         packetLen: len,
         offset: offset,
 
-        id: idValue,
-        idHex: idHex,
+        id: playerId,
+        playerId: playerId,
+        accountId: playerId,
+        displayId: playerIdText,
+        publicId: publicId,
+        publicIdHex: publicIdHex,
 
         nick: info.nick,
         message: info.msg,
@@ -723,7 +759,7 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
         payload: event,
         line:
             "[CHAT] " +
-            "[" + idHex + "] " +
+            "[" + playerIdText + "] " +
             info.nick +
             ": " +
             info.msg

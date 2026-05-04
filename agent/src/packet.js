@@ -11,6 +11,37 @@ export function readU16BEFromArray(arr, off) {
     return ((arr[off] & 0xff) << 8) | (arr[off + 1] & 0xff);
 }
 
+export function readU32BEFromPtr(p) {
+    return (
+        ((p.readU8() & 0xff) << 24) |
+        ((p.add(1).readU8() & 0xff) << 16) |
+        ((p.add(2).readU8() & 0xff) << 8) |
+        (p.add(3).readU8() & 0xff)
+    ) >>> 0;
+}
+
+export function readI32BEFromPtr(p) {
+    return (
+        ((p.readU8() & 0xff) << 24) |
+        ((p.add(1).readU8() & 0xff) << 16) |
+        ((p.add(2).readU8() & 0xff) << 8) |
+        (p.add(3).readU8() & 0xff)
+    );
+}
+
+export function readI32BEFromArray(arr, off) {
+    return (
+        ((arr[off] & 0xff) << 24) |
+        ((arr[off + 1] & 0xff) << 16) |
+        ((arr[off + 2] & 0xff) << 8) |
+        (arr[off + 3] & 0xff)
+    );
+}
+
+export function readU32BEFromArray(arr, off) {
+    return readI32BEFromArray(arr, off) >>> 0;
+}
+
 export function writeU16BEToArray(arr, off, v) {
     arr[off] = (v >> 8) & 0xff;
     arr[off + 1] = v & 0xff;
@@ -65,7 +96,14 @@ export function parseChatFromPtr(buf, len) {
             msgBytes.push(buf.add(msgStart + i).readU8());
         }
 
-        return makeChatInfo(len, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+        const publicId = readU32BEFromPtr(buf.add(1));
+        let accountId = null;
+
+        if (msgEnd + 4 <= len) {
+            accountId = readI32BEFromPtr(buf.add(msgEnd));
+        }
+
+        return makeChatInfo(len, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
 
     } catch (e) {
         console.log("[CHAT] parseChatFromPtr error: " + e);
@@ -97,14 +135,21 @@ export function parseChatFromArray(arr) {
     const nickBytes = arr.slice(nickStart, nickEnd);
     const msgBytes = arr.slice(msgStart, msgEnd);
 
-    return makeChatInfo(arr.length, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+    const publicId = readU32BEFromArray(arr, 1);
+    const accountId = msgEnd + 4 <= arr.length ? readI32BEFromArray(arr, msgEnd) : null;
+
+    return makeChatInfo(arr.length, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
 }
 
-function makeChatInfo(packetLen, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
+function makeChatInfo(packetLen, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
     const nickEnd = nickStart + nickLen;
     const msgEnd = msgStart + msgLen;
 
     return {
+        publicId: publicId,
+        accountId: accountId,
+        accountIdOffset: msgEnd,
+
         nickLenOffset: nickLenOffset,
         nickStart: nickStart,
         nickLen: nickLen,
