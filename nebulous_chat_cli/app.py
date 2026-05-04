@@ -53,11 +53,11 @@ class ChatCliApp:
                     print_ok("frida-server started.")
                 else:
                     print_info("frida-server already running.")
-                print_info(f"Подключаюсь к Frida device: {device_id}")
+                print_info(f"Connecting to Frida device: {device_id}")
             else:
-                print_info("Подключаюсь к USB/device через Frida...")
+                print_info("Connecting to USB/device through Frida...")
 
-            print_info(f"Attach к процессу: {PROCESS_NAME}")
+            print_info(f"Attaching to process: {PROCESS_NAME}")
             connection = connect(
                 PROCESS_NAME,
                 agent_source,
@@ -67,7 +67,7 @@ class ChatCliApp:
             rpc = connection.rpc
 
             print_ok("Agent loaded.")
-            print_info("Сначала отправь любое сообщение в игровом чате, чтобы поймать template.")
+            print_info("Send any message in the in-game chat first to capture the template.")
             print_help()
 
             ctx = CommandContext(
@@ -83,7 +83,7 @@ class ChatCliApp:
                     break
                 except KeyboardInterrupt:
                     print()
-                    print_info("Ctrl+C получен, выхожу.")
+                    print_info("Ctrl+C received, exiting.")
                     break
 
                 if line is None:
@@ -103,8 +103,8 @@ class ChatCliApp:
 
         except frida.ProcessNotFoundError:
             print_error(
-                f"Процесс {PROCESS_NAME!r} не найден. "
-                "Запусти игру и зайди хотя бы до момента, где процесс уже активен."
+                f"Process {PROCESS_NAME!r} was not found. "
+                "Start the game and enter far enough for the process to be active."
             )
             return 1
 
@@ -114,12 +114,12 @@ class ChatCliApp:
 
         except frida.TransportError as exc:
             print_error(f"Frida transport error: {exc}")
-            print_warn("Проверь, что frida-server запущен внутри Android-цели и она видна через adb.")
+            print_warn("Check that frida-server is running inside the Android target and the target is visible through adb.")
             return 1
 
         except KeyboardInterrupt:
             print()
-            print_info("Ctrl+C получен, выхожу.")
+            print_info("Ctrl+C received, exiting.")
             return 0
 
         except Exception as exc:
@@ -141,18 +141,18 @@ class ChatCliApp:
             return
 
         if not st.get("templateCaptured"):
-            print_warn("Сначала отправь любое сообщение в игровом чате, чтобы поймать template.")
+            print_warn("Send any message in the in-game chat first to capture the template.")
             return
 
         try:
             byte_len = len(text.encode("utf-8"))
         except UnicodeEncodeError as exc:
-            print_error(f"Не удалось закодировать текст в UTF-8: {exc}")
+            print_error(f"Failed to encode text as UTF-8: {exc}")
             return
 
         max_len = int(st.get("maxLenBytes") or 0)
         if max_len > 0 and byte_len > max_len:
-            print_warn(f"Сообщение слишком длинное: {byte_len} байт, maxLenBytes={max_len}")
+            print_warn(f"Message is too long: {byte_len} bytes, maxLenBytes={max_len}")
             return
 
         rate_ms = int(st.get("rateLimitMs") or 0)
@@ -162,7 +162,7 @@ class ChatCliApp:
             elapsed = now - self.last_local_send_at
             if elapsed < rate_ms:
                 wait_ms = int(rate_ms - elapsed)
-                print_warn(f"Rate-limit: подожди ещё примерно {wait_ms} ms.")
+                print_warn(f"Rate limit: wait about {wait_ms} ms more.")
                 return
 
         try:

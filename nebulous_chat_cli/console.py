@@ -3,26 +3,26 @@ from __future__ import annotations
 
 HELP_TEXT = """
 Commands:
-  /status        показать состояние template/fd/nick/rate/max/recv
-  /max 128       установить maxLenBytes
-  /rate 1000     установить rate-limit в миллисекундах
-  /recv on       включить отображение входящего чата
-  /recv off      выключить отображение входящего чата
-  /clearrecv     сбросить счётчик входящих сообщений
-  /clear         сбросить пойманный template
-  /help          показать помощь
-  /exit          выйти
-  /quit          выйти
+  /status        show template/fd/nick/rate/max/recv state
+  /max 128       set maxLenBytes
+  /rate 1000     set the rate limit in milliseconds
+  /recv on       enable incoming chat output
+  /recv off      disable incoming chat output
+  /clearrecv     reset incoming message state
+  /clear         clear the captured template
+  /help          show help
+  /exit          exit
+  /quit          exit
 
-Обычный текст без "/" отправляется в чат через Frida RPC.
-Входящие сообщения печатаются автоматически, если recvEnabled=true.
+Plain text without "/" is sent to chat through Frida RPC.
+Incoming messages are printed automatically when recvEnabled=true.
 
-Порядок:
-  1) Зайди в комнату Nebulous.io.
-  2) Запусти python chat_cli.py.
-  3) Отправь любое сообщение вручную в игровом чате.
-  4) Дождись лога [CHAT TEMPLATE].
-  5) Пиши сообщения в эту CLI-консоль.
+Flow:
+  1) Join a Nebulous.io room.
+  2) Run python chat_cli.py.
+  3) Send any message manually in the in-game chat.
+  4) Wait for the [CHAT TEMPLATE] log.
+  5) Type messages into this CLI console.
 """.strip()
 
 

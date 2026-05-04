@@ -28,7 +28,7 @@ def get_status_safe(rpc: Any) -> dict[str, Any]:
     try:
         return dict(rpc.status())
     except Exception as exc:
-        raise RuntimeError(f"Не удалось получить status(): {exc}") from exc
+        raise RuntimeError(f"Failed to get status(): {exc}") from exc
 
 
 def handle_command(text: str, ctx: CommandContext) -> CommandResult:
@@ -52,7 +52,7 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
     if text.startswith("/max"):
         parts = text.split(maxsplit=1)
         if len(parts) != 2:
-            print_warn("Формат: /max 128")
+            print_warn("Usage: /max 128")
             return CommandResult.HANDLED
 
         try:
@@ -67,7 +67,7 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
     if text.startswith("/rate"):
         parts = text.split(maxsplit=1)
         if len(parts) != 2:
-            print_warn("Формат: /rate 1000")
+            print_warn("Usage: /rate 1000")
             return CommandResult.HANDLED
 
         try:
@@ -84,7 +84,7 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
             ctx.rpc.clear()
             ctx.reset_local_rate_limit()
             print_ok("Template cleared.")
-            print_info("Отправь любое сообщение вручную в игровом чате, чтобы поймать новый template.")
+            print_info("Send any message manually in the in-game chat to capture a new template.")
         except Exception as exc:
             from .console import print_error
 
@@ -95,7 +95,7 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
         parts = text.split(maxsplit=1)
 
         if len(parts) != 2 or parts[1] not in ("on", "off"):
-            print_warn("Формат: /recv on или /recv off")
+            print_warn("Usage: /recv on or /recv off")
             return CommandResult.HANDLED
 
         enabled = parts[1] == "on"
@@ -122,7 +122,7 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
         return CommandResult.HANDLED
 
     if text.startswith("/"):
-        print_warn("Неизвестная команда. Напиши /help.")
+        print_warn("Unknown command. Type /help.")
         return CommandResult.HANDLED
 
     return CommandResult.MESSAGE
