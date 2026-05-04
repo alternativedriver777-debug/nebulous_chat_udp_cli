@@ -8,6 +8,7 @@ from typing import Any
 
 import frida
 
+from .colors import format_chat_message
 from .console import print_error
 
 
@@ -26,7 +27,9 @@ def on_message(message: dict[str, Any], data: Any) -> None:
     if msg_type == "send":
         payload = message.get("payload")
         if isinstance(payload, dict):
-            if "line" in payload:
+            if payload.get("type") == "chat_message" and isinstance(payload.get("payload"), dict):
+                print(format_chat_message(payload["payload"]))
+            elif "line" in payload:
                 print(str(payload["line"]))
             else:
                 print("[agent]", json.dumps(payload, ensure_ascii=False))

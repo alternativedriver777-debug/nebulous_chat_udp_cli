@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from nebulous_chat_cli.frida_client import find_device_by_id, get_rpc, select_device
+from nebulous_chat_cli.frida_client import find_device_by_id, get_rpc, on_message, select_device
 
 
 class ScriptWithSyncExports:
@@ -71,6 +73,34 @@ class FridaClientTests(unittest.TestCase):
             self.assertIs(select_device(timeout=3), expected)
 
         get_usb.assert_called_once_with(timeout=3)
+
+    def test_on_message_formats_structured_chat_message(self) -> None:
+        out = io.StringIO()
+        message = {
+            "type": "send",
+            "payload": {
+                "type": "chat_message",
+                "payload": {
+                    "displayId": "123456",
+                    "nick": "Rush",
+                    "message": "hello",
+                },
+                "line": "[CHAT] [123456] Rush: hello",
+            },
+        }
+
+        with redirect_stdout(out):
+            on_message(message, None)
+
+        self.assertEqual(out.getvalue(), "[CHAT] [123456] Rush: hello\n")
+
+    def test_on_message_keeps_legacy_line_fallback(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            on_message({"type": "send", "payload": {"line": "[CHAT] old line"}}, None)
+
+        self.assertEqual(out.getvalue(), "[CHAT] old line\n")
 
 
 if __name__ == "__main__":

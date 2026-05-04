@@ -132,6 +132,26 @@ Plain text without a leading `/` is sent to the chat through Frida RPC.
 
 Incoming chat display is enabled by default. Use `/recv off` if you only want to send messages and keep the terminal quiet.
 
+## Chat Colors
+
+Incoming chat output supports optional ANSI colors. By default, colors are enabled only for interactive terminals and disabled when `NO_COLOR` is set.
+
+Create `chat_colors.json` next to `chat_cli.py` to customize chat colors:
+
+```json
+{
+  "enabled": "auto",
+  "chat": {
+    "prefix": "yellow",
+    "id": "green",
+    "nick": "green",
+    "message": "default"
+  }
+}
+```
+
+`enabled` can be `auto`, `always`, or `never`. Supported colors are `default`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright_*` variants, and `none`.
+
 ## Receiving Chat Messages
 
 The agent hooks `recvfrom` and `recv` in addition to `sendto` and `send`. Because receive buffers are filled after the native function returns, incoming packets are parsed in the hook `onLeave` handler.
