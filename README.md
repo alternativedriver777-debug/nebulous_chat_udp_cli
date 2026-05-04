@@ -42,6 +42,12 @@ Custom `frida-server` path on the Android target:
 python chat_cli.py --adb 127.0.0.1:62001 --frida-server-path /data/local/tmp/frida-server
 ```
 
+Start without chat logging:
+
+```bash
+python chat_cli.py --no-log
+```
+
 Package-style execution is also available:
 
 ```bash
@@ -121,6 +127,12 @@ Incoming chat messages are printed automatically while the CLI is running:
 /rate 1000     set the rate limit in milliseconds
 /recv on       enable incoming chat display
 /recv off      disable incoming chat display
+/log status    show chat log state and current file
+/log on        enable chat logging
+/log off       disable chat logging
+/log list      show recent chat log files
+/log show      print the last 200 lines from the current log
+/log show 1    print the last 200 lines from log #1 in /log list
 /clearrecv     clear incoming chat counters and dedupe state
 /clear         clear the captured template
 /help          show help
@@ -131,6 +143,23 @@ Incoming chat messages are printed automatically while the CLI is running:
 Plain text without a leading `/` is sent to the chat through Frida RPC.
 
 Incoming chat display is enabled by default. Use `/recv off` if you only want to send messages and keep the terminal quiet.
+
+## Chat Logs
+
+Incoming and successfully sent chat messages are logged by default. Each CLI session writes to a timestamped file in `logs/`:
+
+```text
+logs/chat_2026-05-04_22-10-30.log
+```
+
+Log lines are plain text so they can be opened, searched, or scrolled later:
+
+```text
+[2026-05-04 22:10:31] RECV [123456] Rush: hello
+[2026-05-04 22:10:35] SEND [self] MyNick: hi there {via=send bytes=8 packetLen=42}
+```
+
+Use `/log off` and `/log on` while the CLI is running, or start with `--no-log` to disable logging immediately. Use `/log list` to find logs by date/time and `/log show 1` to print a selected log back into the console.
 
 ## Chat Colors
 

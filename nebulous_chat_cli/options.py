@@ -12,6 +12,7 @@ class CliOptions:
     adb: str | None
     frida_server_path: str
     adb_timeout: float
+    chat_log_enabled: bool = True
 
 
 def parse_args(argv: Sequence[str] | None = None) -> CliOptions:
@@ -34,12 +35,18 @@ def parse_args(argv: Sequence[str] | None = None) -> CliOptions:
         default=DEFAULT_ADB_TIMEOUT,
         help=f"ADB/Frida TCP wait timeout in seconds, default: {DEFAULT_ADB_TIMEOUT:g}",
     )
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="disable chat message logging at startup",
+    )
 
     args = parser.parse_args(argv)
     return CliOptions(
         adb=args.adb,
         frida_server_path=args.frida_server_path,
         adb_timeout=args.adb_timeout,
+        chat_log_enabled=not args.no_log,
     )
 
 

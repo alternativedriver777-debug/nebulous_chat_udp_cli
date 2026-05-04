@@ -14,6 +14,7 @@ class OptionsTests(unittest.TestCase):
         self.assertIsNone(options.adb)
         self.assertEqual(options.frida_server_path, "/data/local/tmp/frida-server")
         self.assertEqual(options.adb_timeout, 10.0)
+        self.assertTrue(options.chat_log_enabled)
 
     def test_parse_args_accepts_adb_target_and_server_path(self) -> None:
         options = parse_args([
@@ -28,6 +29,11 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(options.adb, "127.0.0.1:5555")
         self.assertEqual(options.frida_server_path, "/tmp/frida-server")
         self.assertEqual(options.adb_timeout, 3.0)
+
+    def test_parse_args_can_disable_chat_log(self) -> None:
+        options = parse_args(["--no-log"])
+
+        self.assertFalse(options.chat_log_enabled)
 
     def test_parse_args_rejects_non_positive_timeout(self) -> None:
         with redirect_stderr(io.StringIO()):

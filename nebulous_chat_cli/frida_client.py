@@ -11,6 +11,13 @@ import frida
 from .colors import format_chat_message
 from .console import print_error
 
+_chat_logger: Any | None = None
+
+
+def set_chat_logger(logger: Any | None) -> None:
+    global _chat_logger
+    _chat_logger = logger
+
 
 def on_message(message: dict[str, Any], data: Any) -> None:
     msg_type = message.get("type")
@@ -28,7 +35,10 @@ def on_message(message: dict[str, Any], data: Any) -> None:
         payload = message.get("payload")
         if isinstance(payload, dict):
             if payload.get("type") == "chat_message" and isinstance(payload.get("payload"), dict):
-                print(format_chat_message(payload["payload"]))
+                chat_payload = payload["payload"]
+                if _chat_logger is not None:
+                    _chat_logger.log_incoming(chat_payload)
+                print(format_chat_message(chat_payload))
             elif "line" in payload:
                 print(str(payload["line"]))
             else:

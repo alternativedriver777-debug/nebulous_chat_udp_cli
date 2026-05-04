@@ -18,6 +18,7 @@ class CommandResult(Enum):
 class CommandContext:
     rpc: Any
     reset_local_rate_limit: Any
+    chat_logger: Any | None = None
 
 
 def pretty_status(st: dict[str, Any]) -> str:
@@ -110,6 +111,10 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
 
         return CommandResult.HANDLED
 
+    if text.startswith("/log"):
+        handle_log_command(text, ctx)
+        return CommandResult.HANDLED
+
     if text == "/clearrecv":
         try:
             ctx.rpc.clearrecv()
@@ -126,3 +131,72 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
         return CommandResult.HANDLED
 
     return CommandResult.MESSAGE
+
+
+def handle_log_command(text: str, ctx: CommandContext) -> None:
+    logger = ctx.chat_logger
+
+    if logger is None:
+        print_warn("Chat logging is not available.")
+        return
+
+    parts = text.split()
+
+    if len(parts) == 1 or parts[1] == "status":
+        st = logger.status()
+        state = "on" if st.get("enabled") else "off"
+        print_info(
+            f"log={state} records={st.get('recordsWritten')} file={st.get('path')}"
+        )
+        return
+
+    action = parts[1]
+
+    if action == "on":
+        logger.set_enabled(True)
+        print_ok(f"Chat logging enabled: {logger.path}")
+        return
+
+    if action == "off":
+        logger.set_enabled(False)
+        print_ok("Chat logging disabled.")
+        return
+
+    if action == "list":
+        logs = logger.list_logs()
+
+        if not logs:
+            print_info("No chat logs found.")
+            return
+
+        for idx, path in enumerate(logs, start=1):
+            size = path.stat().st_size
+            print(f"{idx}. {path.name} ({size} bytes)")
+        return
+
+    if action == "show":
+        selector = parts[2] if len(parts) >= 3 else None
+        limit = 200
+
+        if len(parts) >= 4:
+            try:
+                limit = int(parts[3])
+            except ValueError:
+                print_warn("Usage: /log show [current|N|filename] [lines]")
+                return
+
+        try:
+            path = logger.resolve_log(selector)
+            lines = logger.read_log(selector, lines=limit)
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(str(exc))
+            return
+
+        print_info(f"Showing {len(lines)} line(s) from {path}")
+        for line in lines:
+            print(line)
+        return
+
+    print_warn("Usage: /log status|on|off|list|show [current|N|filename] [lines]")

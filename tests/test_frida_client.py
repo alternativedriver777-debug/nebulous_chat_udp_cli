@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
-from nebulous_chat_cli.frida_client import find_device_by_id, get_rpc, on_message, select_device
+from nebulous_chat_cli.chat_log import ChatLogger
+from nebulous_chat_cli.frida_client import find_device_by_id, get_rpc, on_message, select_device, set_chat_logger
 
 
 class ScriptWithSyncExports:
@@ -31,6 +34,9 @@ class FakeManager:
 
 
 class FridaClientTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        set_chat_logger(None)
+
     def test_get_rpc_prefers_exports_sync(self) -> None:
         script = ScriptWithSyncExports()
 
@@ -93,6 +99,30 @@ class FridaClientTests(unittest.TestCase):
             on_message(message, None)
 
         self.assertEqual(out.getvalue(), "[CHAT] [123456] Rush: hello\n")
+
+    def test_on_message_logs_structured_chat_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = ChatLogger(log_dir=Path(tmp))
+            set_chat_logger(logger)
+            out = io.StringIO()
+            message = {
+                "type": "send",
+                "payload": {
+                    "type": "chat_message",
+                    "payload": {
+                        "displayId": "123456",
+                        "nick": "Rush",
+                        "message": "hello",
+                    },
+                },
+            }
+
+            with redirect_stdout(out):
+                on_message(message, None)
+
+            logged = logger.path.read_text(encoding="utf-8")
+
+        self.assertIn("RECV [123456] Rush: hello", logged)
 
     def test_on_message_keeps_legacy_line_fallback(self) -> None:
         out = io.StringIO()

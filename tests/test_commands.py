@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 
+from nebulous_chat_cli.chat_log import ChatLogger
 from nebulous_chat_cli.commands import (
     CommandContext,
     CommandResult,
@@ -49,11 +52,16 @@ class FakeRpc:
 
 
 class CommandTests(unittest.TestCase):
-    def make_context(self, rpc: FakeRpc | None = None) -> tuple[CommandContext, list[bool]]:
+    def make_context(
+        self,
+        rpc: FakeRpc | None = None,
+        chat_logger: ChatLogger | None = None,
+    ) -> tuple[CommandContext, list[bool]]:
         resets: list[bool] = []
         return CommandContext(
             rpc=rpc or FakeRpc(),
             reset_local_rate_limit=lambda: resets.append(True),
+            chat_logger=chat_logger,
         ), resets
 
     def test_status_command_is_handled(self) -> None:
@@ -135,6 +143,25 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual(handle_command("/exit", ctx), CommandResult.EXIT)
         self.assertEqual(handle_command("/quit", ctx), CommandResult.EXIT)
+
+    def test_log_commands_control_and_show_logger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = ChatLogger(log_dir=Path(tmp))
+            logger.log_outgoing("hello", nick="Me")
+            ctx, _ = self.make_context(chat_logger=logger)
+
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(handle_command("/log status", ctx), CommandResult.HANDLED)
+                self.assertEqual(handle_command("/log off", ctx), CommandResult.HANDLED)
+                self.assertEqual(handle_command("/log on", ctx), CommandResult.HANDLED)
+                self.assertEqual(handle_command("/log list", ctx), CommandResult.HANDLED)
+                self.assertEqual(handle_command("/log show 1 10", ctx), CommandResult.HANDLED)
+
+        output = out.getvalue()
+        self.assertIn("log=on", output)
+        self.assertIn("Chat logging disabled", output)
+        self.assertIn("chat_", output)
+        self.assertIn("SEND [self] Me: hello", output)
 
     def test_get_status_safe_wraps_errors(self) -> None:
         class BrokenRpc:

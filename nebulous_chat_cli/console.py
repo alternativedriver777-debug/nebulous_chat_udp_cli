@@ -8,6 +8,12 @@ Commands:
   /rate 1000     set the rate limit in milliseconds
   /recv on       enable incoming chat output
   /recv off      disable incoming chat output
+  /log status    show chat log state and current file
+  /log on        enable chat logging
+  /log off       disable chat logging
+  /log list      show recent chat log files
+  /log show      print the last 200 lines from the current log
+  /log show 1    print the last 200 lines from log #1 in /log list
   /clearrecv     reset incoming message state
   /clear         clear the captured template
   /help          show help

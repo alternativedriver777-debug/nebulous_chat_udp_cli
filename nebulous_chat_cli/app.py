@@ -5,20 +5,22 @@ import time
 import frida
 
 from .adb import AdbError, bootstrap_adb_target
+from .chat_log import ChatLogger
 from .commands import CommandContext, CommandResult, get_status_safe, handle_command
 from .config import AGENT_FILE, DEFAULT_ADB_TIMEOUT, DEFAULT_FRIDA_SERVER_PATH, DEFAULT_FRIDA_TIMEOUT, PROCESS_NAME
 from .console import print_error, print_help, print_info, print_ok, print_warn
-from .frida_client import connect, load_agent_source
+from .frida_client import connect, load_agent_source, set_chat_logger
 from .options import CliOptions
 
 
 class ChatCliApp:
-    def __init__(self, options: CliOptions | None = None) -> None:
+    def __init__(self, options: CliOptions | None = None, chat_logger: ChatLogger | None = None) -> None:
         self.options = options or CliOptions(
             adb=None,
             frida_server_path=DEFAULT_FRIDA_SERVER_PATH,
             adb_timeout=DEFAULT_ADB_TIMEOUT,
         )
+        self.chat_logger = chat_logger or ChatLogger(enabled=self.options.chat_log_enabled)
         self.last_local_send_at = 0.0
 
     def reset_local_rate_limit(self) -> None:
@@ -33,6 +35,13 @@ class ChatCliApp:
         except Exception as exc:
             print_error(str(exc))
             return 1
+
+        set_chat_logger(self.chat_logger)
+
+        if self.chat_logger.enabled:
+            print_info(f"Chat log: {self.chat_logger.path}")
+        else:
+            print_info("Chat log: disabled")
 
         connection = None
 
@@ -73,6 +82,7 @@ class ChatCliApp:
             ctx = CommandContext(
                 rpc=rpc,
                 reset_local_rate_limit=self.reset_local_rate_limit,
+                chat_logger=self.chat_logger,
             )
 
             while True:
@@ -127,6 +137,7 @@ class ChatCliApp:
             return 1
 
         finally:
+            set_chat_logger(None)
             if connection is not None:
                 connection.close()
 
@@ -176,6 +187,11 @@ class ChatCliApp:
             msg_bytes = result.get("bytes")
 
             if ok:
+                self.chat_logger.log_outgoing(
+                    text,
+                    nick=str(st.get("nick") or "me"),
+                    result=result,
+                )
                 print_ok(f"sent: bytes={msg_bytes} packetLen={packet_len} via={via} r={r}")
             else:
                 print_warn(
