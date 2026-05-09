@@ -909,6 +909,7 @@ function injectChat(text, nativeApi, kind, options) {
 const DEDUPE_TTL_MS = 1200;
 const MAX_INCOMING_NICK_BYTES = 64;
 const MAX_INCOMING_MESSAGE_BYTES = 512;
+const MAX_ACCOUNT_ID = 199999999;
 
 function hexU32(v) {
     if (v === null || v === undefined) return null;
@@ -972,6 +973,10 @@ function isCleanChatText(s, allowEmpty) {
 function isLikelyIncomingChat(info) {
     if (!info) return false;
 
+    if (!isValidIncomingAccountId(info.accountId)) {
+        return false;
+    }
+
     if (
         info.msgLen <= 0 ||
         info.msgLen > MAX_INCOMING_MESSAGE_BYTES ||
@@ -985,6 +990,14 @@ function isLikelyIncomingChat(info) {
         info.nickLen <= MAX_INCOMING_NICK_BYTES &&
         isCleanChatText(info.nick, false)
     );
+}
+
+function isValidIncomingAccountId(accountId) {
+    if (accountId === null || accountId === undefined) {
+        return true;
+    }
+
+    return accountId >= -1 && accountId <= MAX_ACCOUNT_ID;
 }
 
 function displayIdFor(info) {
