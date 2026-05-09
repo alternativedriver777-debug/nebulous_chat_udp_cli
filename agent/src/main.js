@@ -8,4 +8,4 @@ installHooks(nativeApi);
 installRpc(nativeApi);
 
 console.log("[*] chat injector loaded");
-console.log("[*] Send any message in real Nebulous.io chat to capture template.");
+console.log("[*] Send one real message per chat kind to capture templates: game/clan/private.");

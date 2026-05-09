@@ -1,31 +1,91 @@
-import { HARD_MAX_MESSAGE_BYTES } from "./constants.js";
-import { injectChat } from "./injector.js";
+import { CHAT_KINDS, HARD_MAX_MESSAGE_BYTES } from "./constants.js";
+import { injectChat, normalizeChatKind } from "./injector.js";
 import { state } from "./state.js";
+
+function templateStatus(template) {
+    if (!template) return null;
+
+    return {
+        kind: template.kind,
+        source: template.source,
+        fd: template.fd,
+        nick: template.nick,
+        lastMessage: template.lastMessage,
+        templateLen: template.packetLen,
+        msgLenOffset: template.msgLenOffset,
+        msgStart: template.msgStart,
+        msgEnd: template.msgEnd,
+        tailOffset: template.tailOffset,
+        tailLen: template.tailLen,
+        targetId: template.targetId,
+        id1: template.id1,
+        id2: template.id2,
+        hasSockaddr: !!(
+            template.sockaddrArray &&
+            template.sockaddrLen > 0
+        )
+    };
+}
+
+function allTemplateStatuses() {
+    const result = {};
+    const templates = state.chatTemplates || {};
+
+    for (let i = 0; i < CHAT_KINDS.length; i++) {
+        const kind = CHAT_KINDS[i];
+        result[kind] = templateStatus(templates[kind]);
+    }
+
+    return result;
+}
 
 export function installRpc(nativeApi) {
     rpc.exports = {
         status() {
+            const templates = allTemplateStatuses();
+            const activeTemplate = templates[state.sendKind] || templateStatus(state.chatTemplate);
+
             return {
                 templateCaptured: state.chatTemplate !== null,
-                fd: state.chatTemplate ? state.chatTemplate.fd : null,
-                nick: state.chatTemplate ? state.chatTemplate.nick : null,
-                lastMessage: state.chatTemplate ? state.chatTemplate.lastMessage : null,
-                templateLen: state.chatTemplate ? state.chatTemplate.packetLen : null,
+                activeTemplateCaptured: activeTemplate !== null,
+                sendKind: state.sendKind,
+                fd: activeTemplate ? activeTemplate.fd : null,
+                nick: activeTemplate ? activeTemplate.nick : null,
+                lastMessage: activeTemplate ? activeTemplate.lastMessage : null,
+                templateLen: activeTemplate ? activeTemplate.templateLen : null,
+                templates: templates,
                 recvEnabled: state.recvEnabled,
                 incomingCount: state.incomingCount || 0,
+                incomingCounts: state.incomingCounts || {},
                 lastIncoming: state.lastIncoming,
-                hasSockaddr: !!(
-                    state.chatTemplate &&
-                    state.chatTemplate.sockaddrArray &&
-                    state.chatTemplate.sockaddrLen > 0
-                ),
+                hasSockaddr: !!(activeTemplate && activeTemplate.hasSockaddr),
                 maxLenBytes: state.maxLenBytes,
                 rateLimitMs: state.rateLimitMs
             };
         },
 
         sendchat(text) {
-            return injectChat(String(text), nativeApi);
+            return injectChat(String(text), nativeApi, state.sendKind, {});
+        },
+
+        sendchatkind(kind, text, targetId, targetField) {
+            const options = {};
+
+            if (targetId !== null && targetId !== undefined && String(targetId) !== "") {
+                options.targetId = targetId;
+            }
+
+            if (targetField !== null && targetField !== undefined && String(targetField) !== "") {
+                options.targetField = String(targetField);
+            }
+
+            return injectChat(String(text), nativeApi, normalizeChatKind(kind), options);
+        },
+
+        setsendkind(kind) {
+            state.sendKind = normalizeChatKind(kind);
+            console.log("[CONFIG] sendKind=" + state.sendKind);
+            return { ok: true, sendKind: state.sendKind };
         },
 
         setmaxlen(n) {
@@ -77,17 +137,34 @@ export function installRpc(nativeApi) {
 
         clearrecv() {
             state.incomingCount = 0;
+            state.incomingCounts = {};
             state.lastIncoming = null;
             state.incomingDedupe = {};
             console.log("[CONFIG] incoming chat state cleared");
             return { ok: true };
         },
 
-        clear() {
+        clear(kind) {
+            if (kind !== null && kind !== undefined && String(kind).trim() !== "") {
+                const chatKind = normalizeChatKind(kind);
+
+                if (state.chatTemplates) {
+                    delete state.chatTemplates[chatKind];
+                }
+
+                if (state.chatTemplate && state.chatTemplate.kind === chatKind) {
+                    state.chatTemplate = null;
+                }
+
+                console.log("[CONFIG] template cleared kind=" + chatKind);
+                return { ok: true, kind: chatKind };
+            }
+
             state.chatTemplate = null;
+            state.chatTemplates = {};
             state.lastInjectAtMs = 0;
 
-            console.log("[CONFIG] template cleared");
+            console.log("[CONFIG] all templates cleared");
 
             return {
                 ok: true

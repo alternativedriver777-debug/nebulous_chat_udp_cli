@@ -104,7 +104,7 @@ python chat_cli.py --adb 127.0.0.1:62001
 [CHAT TEMPLATE] source=sendto fd=... nick="..." msg="hello"
 ```
 
-8. You can now type messages directly in the CLI:
+8. You can now type messages directly in the CLI. Public chat is the default outgoing chat:
 
 ```text
 > test
@@ -116,8 +116,13 @@ Incoming chat messages are printed automatically while the CLI is running:
 
 ```text
 [CHAT] [123456] Rush: hello
+[CLAN] [123456] Rush: clan hello
 [CHAT] [987654] OtherPlayer: hi
+[PM] [123456] Rush: private hello
 ```
+
+For clan/private sending, manually send one message from that in-game chat first.
+The agent captures one template per chat kind and then only rewrites the message field.
 
 ## CLI Commands
 
@@ -125,6 +130,11 @@ Incoming chat messages are printed automatically while the CLI is running:
 /status        show the template/fd/nick/rate/max/recv state
 /max 128       set maxLenBytes
 /rate 1000     set the rate limit in milliseconds
+/send game     set default outgoing chat: game, clan, or private
+/game hello    send one message to public chat
+/clan hello    send one message to clan chat
+/pm 123 hello  send a private message to account/player id 123
+/show all      show incoming: all, off, game, clan, or private
 /recv on       enable incoming chat display
 /recv off      disable incoming chat display
 /log status    show chat log state and current file
@@ -140,23 +150,26 @@ Incoming chat messages are printed automatically while the CLI is running:
 /quit          exit
 ```
 
-Plain text without a leading `/` is sent to the chat through Frida RPC.
+Plain text without a leading `/` is sent to the current default outgoing chat through Frida RPC.
+Use `/send clan` to make plain text go to clan chat, and `/send game` to switch back.
 
-Incoming chat display is enabled by default. Use `/recv off` if you only want to send messages and keep the terminal quiet.
+Incoming chat display is enabled by default. Use `/show clan` to display only clan messages while still logging all incoming chat kinds. Use `/show off` to keep the terminal quiet while logging still remains active. Use `/recv off` only if you want the agent to stop forwarding incoming chat events entirely.
 
 ## Chat Logs
 
-Incoming and successfully sent chat messages are logged by default. Each CLI session writes to a timestamped file in `logs/`:
+Incoming and successfully sent chat messages are logged by default. Each CLI session writes separate timestamped files per chat kind in `logs/`:
 
 ```text
-logs/chat_2026-05-04_22-10-30.log
+logs/chat_2026-05-04_22-10-30_game.log
+logs/chat_2026-05-04_22-10-30_clan.log
+logs/chat_2026-05-04_22-10-30_private.log
 ```
 
 Log lines are plain text so they can be opened, searched, or scrolled later:
 
 ```text
-[2026-05-04 22:10:31] RECV [123456] Rush: hello
-[2026-05-04 22:10:35] SEND [self] MyNick: hi there {via=send bytes=8 packetLen=42}
+[2026-05-04 22:10:31] RECV CHAT [123456] Rush: hello
+[2026-05-04 22:10:35] SEND CLAN [self] MyNick: hi there {via=send bytes=8 packetLen=42}
 ```
 
 Use `/log off` and `/log on` while the CLI is running, or start with `--no-log` to disable logging immediately. Use `/log list` to find logs by date/time and `/log show 1` to print a selected log back into the console.
@@ -175,6 +188,20 @@ Create `chat_colors.json` next to `chat_cli.py` to customize chat colors:
     "id": "green",
     "nick": "green",
     "message": "default"
+  },
+  "kinds": {
+    "clan": {
+      "prefix": "cyan",
+      "id": "bright_cyan",
+      "nick": "bright_cyan",
+      "message": "default"
+    },
+    "private": {
+      "prefix": "magenta",
+      "id": "bright_magenta",
+      "nick": "bright_magenta",
+      "message": "default"
+    }
   }
 }
 ```

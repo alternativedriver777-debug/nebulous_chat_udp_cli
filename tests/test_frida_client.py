@@ -8,7 +8,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nebulous_chat_cli.chat_log import ChatLogger
-from nebulous_chat_cli.frida_client import find_device_by_id, get_rpc, on_message, select_device, set_chat_logger
+from nebulous_chat_cli.frida_client import (
+    find_device_by_id,
+    get_rpc,
+    on_message,
+    select_device,
+    set_chat_display_filter,
+    set_chat_logger,
+)
 
 
 class ScriptWithSyncExports:
@@ -36,6 +43,7 @@ class FakeManager:
 class FridaClientTests(unittest.TestCase):
     def tearDown(self) -> None:
         set_chat_logger(None)
+        set_chat_display_filter("all")
 
     def test_get_rpc_prefers_exports_sync(self) -> None:
         script = ScriptWithSyncExports()
@@ -122,7 +130,34 @@ class FridaClientTests(unittest.TestCase):
 
             logged = logger.path.read_text(encoding="utf-8")
 
-        self.assertIn("RECV [123456] Rush: hello", logged)
+        self.assertIn("RECV CHAT [123456] Rush: hello", logged)
+
+    def test_on_message_logs_all_but_displays_selected_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = ChatLogger(log_dir=Path(tmp))
+            set_chat_logger(logger)
+            set_chat_display_filter("clan")
+            out = io.StringIO()
+            message = {
+                "type": "send",
+                "payload": {
+                    "type": "chat_message",
+                    "payload": {
+                        "kind": "private",
+                        "displayId": "42",
+                        "nick": "Rush",
+                        "message": "secret",
+                    },
+                },
+            }
+
+            with redirect_stdout(out):
+                on_message(message, None)
+
+            logged = logger.paths["private"].read_text(encoding="utf-8")
+
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("RECV PRIVATE [42] Rush: secret", logged)
 
     def test_on_message_keeps_legacy_line_fallback(self) -> None:
         out = io.StringIO()

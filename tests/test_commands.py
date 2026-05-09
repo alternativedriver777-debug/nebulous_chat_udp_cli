@@ -22,6 +22,7 @@ class FakeRpc:
         self.cleared = False
         self.recv_enabled = None
         self.recv_cleared = False
+        self.send_kind = None
 
     def status(self) -> dict[str, object]:
         return {
@@ -49,6 +50,10 @@ class FakeRpc:
     def clearrecv(self) -> dict[str, object]:
         self.recv_cleared = True
         return {"ok": True}
+
+    def setsendkind(self, kind: str) -> dict[str, object]:
+        self.send_kind = kind
+        return {"ok": True, "sendKind": kind}
 
 
 class CommandTests(unittest.TestCase):
@@ -114,6 +119,42 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(result, CommandResult.HANDLED)
         self.assertEqual(rpc.recv_enabled, False)
 
+    def test_send_kind_command_updates_rpc(self) -> None:
+        rpc = FakeRpc()
+        ctx, _ = self.make_context(rpc)
+
+        with redirect_stdout(io.StringIO()):
+            result = handle_command("/send clan", ctx)
+
+        self.assertEqual(result, CommandResult.HANDLED)
+        self.assertEqual(rpc.send_kind, "clan")
+
+    def test_show_command_updates_display_filter(self) -> None:
+        ctx, _ = self.make_context()
+
+        with redirect_stdout(io.StringIO()) as out:
+            result = handle_command("/show clan", ctx)
+
+        self.assertEqual(result, CommandResult.HANDLED)
+        self.assertIn("show=clan", out.getvalue())
+
+        with redirect_stdout(io.StringIO()):
+            handle_command("/show all", ctx)
+
+    def test_chat_send_shortcuts_call_callback(self) -> None:
+        calls: list[tuple[str, str | None, str | None]] = []
+        ctx, _ = self.make_context()
+        ctx.send_chat = lambda message, kind=None, target_id=None: calls.append((message, kind, target_id))
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(handle_command("/clan hello", ctx), CommandResult.HANDLED)
+            self.assertEqual(handle_command("/pm 42 secret", ctx), CommandResult.HANDLED)
+
+        self.assertEqual(calls, [
+            ("hello", "clan", None),
+            ("secret", "private", "42"),
+        ])
+
     def test_clearrecv_command_updates_rpc(self) -> None:
         rpc = FakeRpc()
         ctx, _ = self.make_context(rpc)
@@ -161,7 +202,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("log=on", output)
         self.assertIn("Chat logging disabled", output)
         self.assertIn("chat_", output)
-        self.assertIn("SEND [self] Me: hello", output)
+        self.assertIn("SEND CHAT [self] Me: hello", output)
 
     def test_get_status_safe_wraps_errors(self) -> None:
         class BrokenRpc:

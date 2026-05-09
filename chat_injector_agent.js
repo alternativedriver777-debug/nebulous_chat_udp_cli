@@ -5,21 +5,55 @@
 
 // agent/src/constants.js
 const CHAT_OPCODE = 0x89;
+const CHAT_KIND_GAME = "game";
+const CHAT_KIND_CLAN = "clan";
+const CHAT_KIND_PRIVATE = "private";
+const CHAT_KIND_ALL = "all";
+
+const CHAT_KINDS = [
+    CHAT_KIND_GAME,
+    CHAT_KIND_CLAN,
+    CHAT_KIND_PRIVATE
+];
+
+const CHAT_OPCODE_BY_KIND = {
+    game: 0x89,
+    clan: 0x09,
+    private: 0x24
+};
+
+const CHAT_KIND_BY_OPCODE = {
+    0x89: CHAT_KIND_GAME,
+    0x09: CHAT_KIND_CLAN,
+    0x24: CHAT_KIND_PRIVATE
+};
+
+const CHAT_LABEL_BY_KIND = {
+    game: "CHAT",
+    clan: "CLAN",
+    private: "PM"
+};
+
+const DEFAULT_SEND_KIND = CHAT_KIND_GAME;
 const MAX_PACKET_LEN = 8192;
 const HARD_MAX_MESSAGE_BYTES = 4096;
 const DEFAULT_MAX_LEN_BYTES = 128;
 const DEFAULT_RATE_LIMIT_MS = 1000;
 
 // agent/src/state.js
-
 const state = {
     maxLenBytes: DEFAULT_MAX_LEN_BYTES,
     rateLimitMs: DEFAULT_RATE_LIMIT_MS,
+    sendKind: DEFAULT_SEND_KIND,
+
     injecting: false,
     lastInjectAtMs: 0,
     chatTemplate: null,
+    chatTemplates: {},
+
     recvEnabled: true,
     incomingCount: 0,
+    incomingCounts: {},
     lastIncoming: null,
     incomingDedupe: {}
 };
@@ -159,6 +193,8 @@ function utf8Encode(text) {
 }
 
 // agent/src/packet.js
+const MAX_ALIAS_BYTES = 1024;
+const MAX_MESSAGE_BYTES = 4096;
 
 function readU16BEFromPtr(p) {
     const a = p.readU8();
@@ -206,133 +242,235 @@ function writeU16BEToArray(arr, off, v) {
     arr[off + 1] = v & 0xff;
 }
 
-function parseChatFromPtr(buf, len) {
+function writeI32BEToArray(arr, off, v) {
+    arr[off] = (v >> 24) & 0xff;
+    arr[off + 1] = (v >> 16) & 0xff;
+    arr[off + 2] = (v >> 8) & 0xff;
+    arr[off + 3] = v & 0xff;
+}
+
+function ptrToArray(buf, len) {
+    const arr = [];
+
+    for (let i = 0; i < len; i++) {
+        arr.push(buf.add(i).readU8());
+    }
+
+    return arr;
+}
+
+function readMutf8FromArray(arr, lenOffset, maxLen) {
+    if (lenOffset + 2 > arr.length) return null;
+
+    const byteLen = readU16BEFromArray(arr, lenOffset);
+    if (byteLen < 0 || byteLen > maxLen) return null;
+
+    const start = lenOffset + 2;
+    const end = start + byteLen;
+    if (end > arr.length) return null;
+
+    return {
+        lenOffset: lenOffset,
+        start: start,
+        len: byteLen,
+        end: end,
+        bytes: arr.slice(start, end),
+        text: utf8Decode(arr.slice(start, end))
+    };
+}
+
+function hasReplacementChar(s) {
+    return String(s).indexOf("\ufffd") >= 0;
+}
+
+function parseTwoStringPacket(arr, kind, options) {
+    options = options || {};
+
+    if (!arr || arr.length < 9) return null;
+
+    const expectedOpcode = CHAT_OPCODE_BY_KIND[kind];
+    const opcode = arr[0] & 0xff;
+
+    if (opcode !== expectedOpcode) return null;
+
+    const u32Field = readU32BEFromArray(arr, 1);
+    const first = readMutf8FromArray(arr, 5, MAX_ALIAS_BYTES);
+    if (!first) return null;
+
+    const second = readMutf8FromArray(arr, first.end, MAX_MESSAGE_BYTES);
+    if (!second) return null;
+
+    if (hasReplacementChar(first.text) || hasReplacementChar(second.text)) {
+        return null;
+    }
+
+    const msgEnd = second.end;
+    let accountId = null;
+    let accountIdOffset = msgEnd;
+    let clanRole = null;
+
+    if (kind === CHAT_KIND_CLAN) {
+        if (msgEnd + 5 <= arr.length) {
+            clanRole = arr[msgEnd] & 0xff;
+            accountId = readI32BEFromArray(arr, msgEnd + 1);
+            accountIdOffset = msgEnd + 1;
+        }
+    } else if (msgEnd + 4 <= arr.length) {
+        accountId = readI32BEFromArray(arr, msgEnd);
+    }
+
+    return makeChatInfo({
+        kind: kind,
+        opcode: opcode,
+        packetLen: arr.length,
+        publicId: u32Field,
+        id1: u32Field,
+        id2: null,
+        accountId: accountId,
+        accountIdOffset: accountIdOffset,
+        clanRole: clanRole,
+        nickInfo: first,
+        msgInfo: second,
+        tailOffset: msgEnd,
+        targetIdOffsets: []
+    });
+}
+
+function parsePrivateChatFromArray(arr) {
+    if (!arr || arr.length < 9) return null;
+    if ((arr[0] & 0xff) !== CHAT_OPCODE_BY_KIND.private) return null;
+
+    // Probe results confirm private packets as:
+    //   SEND: target ids + emptyAlias + msg
+    //   RECV: senderId + targetId + nick + msg
+    // Different builds/devices may include one, two, or three i32 id fields
+    // before the two MUTF8 strings, so try all sane id-prefix widths.
+    const idCounts = [2, 1, 3];
+
+    for (let i = 0; i < idCounts.length; i++) {
+        const parsed = parsePrivateVariant(arr, idCounts[i]);
+        if (parsed) return parsed;
+    }
+
+    return null;
+}
+
+function parsePrivateVariant(arr, idCount) {
+    const stringOffset = 1 + (idCount * 4);
+    if (stringOffset + 4 > arr.length) return null;
+
+    const first = readMutf8FromArray(arr, stringOffset, MAX_ALIAS_BYTES);
+    if (!first) return null;
+
+    const second = readMutf8FromArray(arr, first.end, MAX_MESSAGE_BYTES);
+    if (!second || second.len <= 0) return null;
+
+    if (hasReplacementChar(first.text) || hasReplacementChar(second.text)) {
+        return null;
+    }
+
+    const ids = [];
+    const targetIdOffsets = [];
+
+    for (let i = 0; i < idCount; i++) {
+        const off = 1 + (i * 4);
+        ids.push(readI32BEFromArray(arr, off));
+        targetIdOffsets.push(off);
+    }
+
+    const id1 = ids.length > 0 ? ids[0] : null;
+    const id2 = ids.length > 1 ? ids[1] : null;
+
+    return makeChatInfo({
+        kind: CHAT_KIND_PRIVATE,
+        opcode: arr[0] & 0xff,
+        packetLen: arr.length,
+        publicId: null,
+        id1: id1,
+        id2: id2,
+        accountId: id1,
+        accountIdOffset: targetIdOffsets.length > 0 ? targetIdOffsets[0] : null,
+        clanRole: null,
+        nickInfo: first,
+        msgInfo: second,
+        tailOffset: second.end,
+        targetIdOffsets: targetIdOffsets
+    });
+}
+
+function makeChatInfo(values) {
+    const nick = values.nickInfo;
+    const msg = values.msgInfo;
+
+    return {
+        kind: values.kind,
+        opcode: values.opcode,
+
+        publicId: values.publicId,
+        id1: values.id1,
+        id2: values.id2,
+        targetId: values.id2 === null || values.id2 === undefined ? values.id1 : values.id2,
+        accountId: values.accountId,
+        accountIdOffset: values.accountIdOffset,
+        clanRole: values.clanRole,
+
+        nickLenOffset: nick.lenOffset,
+        nickStart: nick.start,
+        nickLen: nick.len,
+        nickEnd: nick.end,
+
+        msgLenOffset: msg.lenOffset,
+        msgStart: msg.start,
+        msgLen: msg.len,
+        msgEnd: msg.end,
+
+        tailOffset: values.tailOffset,
+        tailLen: values.packetLen - values.tailOffset,
+
+        nick: nick.text,
+        msg: msg.text,
+        targetIdOffsets: values.targetIdOffsets || []
+    };
+}
+
+function parseChatFromPtr(buf, len, direction) {
     try {
-        if (len < 12) return null;
-
-        const opcode = buf.readU8();
-
-        if (opcode !== CHAT_OPCODE) {
-            return null;
-        }
-
-        const nickLenOffset = 5;
-        const nickStart = 7;
-
-        if (nickLenOffset + 2 > len) return null;
-
-        const nickLen = readU16BEFromPtr(buf.add(nickLenOffset));
-        const nickEnd = nickStart + nickLen;
-
-        if (nickLen < 0 || nickLen > 1024) {
-            return null;
-        }
-
-        if (nickEnd + 2 > len) {
-            return null;
-        }
-
-        const msgLenOffset = nickEnd;
-        const msgLen = readU16BEFromPtr(buf.add(msgLenOffset));
-        const msgStart = msgLenOffset + 2;
-        const msgEnd = msgStart + msgLen;
-
-        if (msgLen < 0 || msgLen > 4096) {
-            return null;
-        }
-
-        if (msgEnd > len) {
-            return null;
-        }
-
-        const nickBytes = [];
-        for (let i = 0; i < nickLen; i++) {
-            nickBytes.push(buf.add(nickStart + i).readU8());
-        }
-
-        const msgBytes = [];
-        for (let i = 0; i < msgLen; i++) {
-            msgBytes.push(buf.add(msgStart + i).readU8());
-        }
-
-        const publicId = readU32BEFromPtr(buf.add(1));
-        let accountId = null;
-
-        if (msgEnd + 4 <= len) {
-            accountId = readI32BEFromPtr(buf.add(msgEnd));
-        }
-
-        return makeChatInfo(len, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
-
+        if (len <= 0) return null;
+        return parseChatFromArray(ptrToArray(buf, len), direction);
     } catch (e) {
         console.log("[CHAT] parseChatFromPtr error: " + e);
         return null;
     }
 }
 
-function parseChatFromArray(arr) {
-    if (!arr || arr.length < 12) return null;
-    if ((arr[0] & 0xff) !== CHAT_OPCODE) return null;
+function parseChatFromArray(arr, direction) {
+    if (!arr || arr.length < 7) return null;
 
-    const nickLenOffset = 5;
-    const nickStart = 7;
+    const opcode = arr[0] & 0xff;
+    const kind = CHAT_KIND_BY_OPCODE[opcode];
+    if (!kind) return null;
 
-    const nickLen = readU16BEFromArray(arr, nickLenOffset);
-    const nickEnd = nickStart + nickLen;
+    if (kind === CHAT_KIND_GAME) {
+        return parseTwoStringPacket(arr, CHAT_KIND_GAME, { direction: direction });
+    }
 
-    if (nickLen < 0 || nickLen > 1024) return null;
-    if (nickEnd + 2 > arr.length) return null;
+    if (kind === CHAT_KIND_CLAN) {
+        return parseTwoStringPacket(arr, CHAT_KIND_CLAN, { direction: direction });
+    }
 
-    const msgLenOffset = nickEnd;
-    const msgLen = readU16BEFromArray(arr, msgLenOffset);
-    const msgStart = msgLenOffset + 2;
-    const msgEnd = msgStart + msgLen;
+    if (kind === CHAT_KIND_PRIVATE) {
+        return parsePrivateChatFromArray(arr, direction);
+    }
 
-    if (msgLen < 0 || msgLen > 4096) return null;
-    if (msgEnd > arr.length) return null;
-
-    const nickBytes = arr.slice(nickStart, nickEnd);
-    const msgBytes = arr.slice(msgStart, msgEnd);
-
-    const publicId = readU32BEFromArray(arr, 1);
-    const accountId = msgEnd + 4 <= arr.length ? readI32BEFromArray(arr, msgEnd) : null;
-
-    return makeChatInfo(arr.length, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes);
+    return null;
 }
 
-function makeChatInfo(packetLen, publicId, accountId, nickLenOffset, nickStart, nickLen, msgLenOffset, msgStart, msgLen, nickBytes, msgBytes) {
-    const nickEnd = nickStart + nickLen;
-    const msgEnd = msgStart + msgLen;
-
-    return {
-        publicId: publicId,
-        accountId: accountId,
-        accountIdOffset: msgEnd,
-
-        nickLenOffset: nickLenOffset,
-        nickStart: nickStart,
-        nickLen: nickLen,
-        nickEnd: nickEnd,
-
-        msgLenOffset: msgLenOffset,
-        msgStart: msgStart,
-        msgLen: msgLen,
-        msgEnd: msgEnd,
-
-        tailOffset: msgEnd,
-        tailLen: packetLen - msgEnd,
-
-        nick: utf8Decode(nickBytes),
-        msg: utf8Decode(msgBytes)
-    };
-}
-
-function buildChatMessage(template, newText, maxLenBytes) {
+function buildChatMessage(template, newText, maxLenBytes, options) {
     if (!template || !template.packet) {
         throw new Error("template is not captured yet");
     }
 
-    const info = parseChatFromArray(template.packet);
+    const info = parseChatFromArray(template.packet, "send");
 
     if (!info) {
         throw new Error("cannot parse saved template");
@@ -368,6 +506,7 @@ function buildChatMessage(template, newText, maxLenBytes) {
         out[i] = packet[i] & 0xff;
     }
 
+    applyTargetOptions(out, info, options || {});
     writeU16BEToArray(out, prefixLen, msgBytes.length);
 
     const newMsgStart = prefixLen + 2;
@@ -382,10 +521,51 @@ function buildChatMessage(template, newText, maxLenBytes) {
         out[newTailStart + i] = packet[info.msgEnd + i] & 0xff;
     }
 
+    const newInfo = parseChatFromArray(out, "send");
+
     return {
         packet: out,
-        msgBytesLen: msgBytes.length
+        kind: info.kind,
+        msgBytesLen: msgBytes.length,
+        targetId: newInfo ? newInfo.targetId : info.targetId
     };
+}
+
+function applyTargetOptions(out, info, options) {
+    if (info.kind !== CHAT_KIND_PRIVATE) {
+        return;
+    }
+
+    if (options.targetId === null || options.targetId === undefined || options.targetId === "") {
+        return;
+    }
+
+    const targetId = parseInt(options.targetId, 10);
+    if (!isFinite(targetId)) {
+        throw new Error("targetId must be an integer");
+    }
+
+    const mode = String(options.targetField || "second").toLowerCase();
+    const offsets = info.targetIdOffsets || [];
+
+    if (offsets.length === 0) {
+        throw new Error("template has no target id fields");
+    }
+
+    if (mode === "first") {
+        writeI32BEToArray(out, offsets[0], targetId);
+        return;
+    }
+
+    if (mode === "both") {
+        for (let i = 0; i < offsets.length; i++) {
+            writeI32BEToArray(out, offsets[i], targetId);
+        }
+        return;
+    }
+
+    const index = offsets.length > 1 ? 1 : 0;
+    writeI32BEToArray(out, offsets[index], targetId);
 }
 
 // agent/src/memory.js
@@ -514,9 +694,59 @@ function createNativeApi() {
 }
 
 // agent/src/template.js
+function findSockaddrForFd(fd, preferredKind) {
+    const templates = state.chatTemplates || {};
+
+    if (
+        preferredKind &&
+        templates[preferredKind] &&
+        templates[preferredKind].fd === fd &&
+        templates[preferredKind].sockaddrArray &&
+        templates[preferredKind].sockaddrLen > 0
+    ) {
+        return {
+            sockaddrArray: templates[preferredKind].sockaddrArray.slice(0),
+            sockaddrLen: templates[preferredKind].sockaddrLen
+        };
+    }
+
+    for (const kind in templates) {
+        const template = templates[kind];
+
+        if (
+            template &&
+            template.fd === fd &&
+            template.sockaddrArray &&
+            template.sockaddrLen > 0
+        ) {
+            return {
+                sockaddrArray: template.sockaddrArray.slice(0),
+                sockaddrLen: template.sockaddrLen
+            };
+        }
+    }
+
+    if (
+        state.chatTemplate &&
+        state.chatTemplate.fd === fd &&
+        state.chatTemplate.sockaddrArray &&
+        state.chatTemplate.sockaddrLen > 0
+    ) {
+        return {
+            sockaddrArray: state.chatTemplate.sockaddrArray.slice(0),
+            sockaddrLen: state.chatTemplate.sockaddrLen
+        };
+    }
+
+    return {
+        sockaddrArray: null,
+        sockaddrLen: 0
+    };
+}
 
 function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
     const packet = ptrToArray(buf, len);
+    const kind = info.kind || "game";
 
     let sockaddrArray = null;
     let safeSockaddrLen = 0;
@@ -527,17 +757,14 @@ function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
         if (sockaddrArray !== null) {
             safeSockaddrLen = sockaddrLen;
         }
-    } else if (
-        state.chatTemplate &&
-        state.chatTemplate.fd === fd &&
-        state.chatTemplate.sockaddrArray &&
-        state.chatTemplate.sockaddrLen > 0
-    ) {
-        sockaddrArray = state.chatTemplate.sockaddrArray.slice(0);
-        safeSockaddrLen = state.chatTemplate.sockaddrLen;
+    } else {
+        const known = findSockaddrForFd(fd, kind);
+        sockaddrArray = known.sockaddrArray;
+        safeSockaddrLen = known.sockaddrLen;
     }
 
-    state.chatTemplate = {
+    const template = {
+        kind: kind,
         source: sourceName,
         fd: fd,
 
@@ -554,6 +781,9 @@ function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
         msgEnd: info.msgEnd,
         tailOffset: info.tailOffset,
         tailLen: info.tailLen,
+        targetId: info.targetId,
+        id1: info.id1,
+        id2: info.id2,
 
         sockaddrArray: sockaddrArray,
         sockaddrLen: safeSockaddrLen,
@@ -561,20 +791,46 @@ function saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen) {
         capturedAtMs: nowMs()
     };
 
+    if (!state.chatTemplates) {
+        state.chatTemplates = {};
+    }
+
+    state.chatTemplates[kind] = template;
+
+    if (kind === "game" || !state.chatTemplate) {
+        state.chatTemplate = template;
+    }
+
     console.log(
-        "[CHAT TEMPLATE] source=" + sourceName +
+        "[CHAT TEMPLATE] kind=" + kind +
+        " source=" + sourceName +
         " fd=" + fd +
         " len=" + len +
         " nick=" + quote(info.nick) +
-        " msg=" + quote(info.msg)
+        " msg=" + quote(info.msg) +
+        " targetId=" + (info.targetId === null || info.targetId === undefined ? "null" : info.targetId)
     );
 }
 
 // agent/src/injector.js
+function normalizeChatKind(kind) {
+    const value = String(kind || state.sendKind || "game").toLowerCase();
 
-function injectChat(text, nativeApi) {
-    if (!state.chatTemplate) {
-        throw new Error("template is not captured yet");
+    if (CHAT_KINDS.indexOf(value) < 0) {
+        throw new Error("unknown chat kind: " + kind);
+    }
+
+    return value;
+}
+
+function injectChat(text, nativeApi, kind, options) {
+    const sendKind = normalizeChatKind(kind);
+
+    const templates = state.chatTemplates || {};
+    const template = templates[sendKind] || (sendKind === "game" ? state.chatTemplate : null);
+
+    if (!template) {
+        throw new Error("template for " + sendKind + " chat is not captured yet");
     }
 
     const currentMs = nowMs();
@@ -584,7 +840,7 @@ function injectChat(text, nativeApi) {
         throw new Error("rate-limit: wait " + (state.rateLimitMs - elapsed) + " ms");
     }
 
-    const built = buildChatMessage(state.chatTemplate, text, state.maxLenBytes);
+    const built = buildChatMessage(template, text, state.maxLenBytes, options || {});
     const packet = built.packet;
 
     const packetPtr = arrayToMemory(packet);
@@ -596,24 +852,24 @@ function injectChat(text, nativeApi) {
 
     try {
         if (
-            state.chatTemplate.sockaddrArray &&
-            state.chatTemplate.sockaddrLen > 0
+            template.sockaddrArray &&
+            template.sockaddrLen > 0
         ) {
-            const sockaddrPtr = sockaddrArrayToMemory(state.chatTemplate.sockaddrArray);
+            const sockaddrPtr = sockaddrArrayToMemory(template.sockaddrArray);
 
             via = "sendto";
             r = nativeApi.sendtoNative(
-                state.chatTemplate.fd,
+                template.fd,
                 packetPtr,
                 packet.length,
                 0,
                 sockaddrPtr,
-                state.chatTemplate.sockaddrLen
+                template.sockaddrLen
             );
         } else {
             via = "send";
             r = nativeApi.sendNative(
-                state.chatTemplate.fd,
+                template.fd,
                 packetPtr,
                 packet.length,
                 0
@@ -629,36 +885,42 @@ function injectChat(text, nativeApi) {
     state.lastInjectAtMs = currentMs;
 
     console.log(
-        "[INJECT] text=" + quote(text) +
+        "[INJECT] kind=" + sendKind +
+        " text=" + quote(text) +
         " bytes=" + built.msgBytesLen +
         " packetLen=" + packet.length +
         " via=" + via +
-        " r=" + r
+        " r=" + r +
+        " targetId=" + (built.targetId === null || built.targetId === undefined ? "null" : built.targetId)
     );
 
     return {
         ok: r === packet.length,
+        kind: sendKind,
         result: r,
         via: via,
         bytes: built.msgBytesLen,
-        packetLen: packet.length
+        packetLen: packet.length,
+        targetId: built.targetId
     };
 }
 
 // agent/src/receiver.js
-
 const DEDUPE_TTL_MS = 1200;
 const MAX_INCOMING_NICK_BYTES = 64;
 const MAX_INCOMING_MESSAGE_BYTES = 512;
 
 function hexU32(v) {
+    if (v === null || v === undefined) return null;
     return "0x" + ("00000000" + (v >>> 0).toString(16)).slice(-8);
 }
 
-function makeDedupeKey(info, playerIdText, publicIdHex, packetLen, offset) {
+function makeDedupeKey(info, displayId, packetLen, offset) {
     return [
-        playerIdText,
-        publicIdHex,
+        incomingKindForInfo(info),
+        displayId,
+        info.id1,
+        info.id2,
         info.nick,
         info.msg,
         info.msgLen,
@@ -667,7 +929,7 @@ function makeDedupeKey(info, playerIdText, publicIdHex, packetLen, offset) {
     ].join("|");
 }
 
-function isDuplicateIncoming(key) {
+function isDuplicate(key) {
     const now = Date.now();
 
     if (!state.incomingDedupe) {
@@ -698,52 +960,95 @@ function hasControlChars(s) {
     return false;
 }
 
-function isCleanChatText(s) {
+function isCleanChatText(s, allowEmpty) {
     return (
         typeof s === "string" &&
-        s.length > 0 &&
+        (allowEmpty || s.length > 0) &&
         s.indexOf("\ufffd") === -1 &&
         !hasControlChars(s)
     );
 }
 
 function isLikelyIncomingChat(info) {
+    if (!info) return false;
+
+    if (
+        info.msgLen <= 0 ||
+        info.msgLen > MAX_INCOMING_MESSAGE_BYTES ||
+        !isCleanChatText(info.msg, false)
+    ) {
+        return false;
+    }
+
     return (
         info.nickLen > 0 &&
         info.nickLen <= MAX_INCOMING_NICK_BYTES &&
-        info.msgLen > 0 &&
-        info.msgLen <= MAX_INCOMING_MESSAGE_BYTES &&
-        isCleanChatText(info.nick) &&
-        isCleanChatText(info.msg)
+        isCleanChatText(info.nick, false)
     );
 }
 
-function emitChatMessage(sourceName, fd, buf, len, offset, info) {
-    const publicId = info.publicId === null || info.publicId === undefined ? 0 : info.publicId;
-    const publicIdHex = hexU32(publicId);
-    const playerId = info.accountId;
-    const playerIdText = playerId === null ? "unknown" : String(playerId);
-    const dedupeKey = makeDedupeKey(info, playerIdText, publicIdHex, len, offset);
+function displayIdFor(info) {
+    if (info.accountId !== null && info.accountId !== undefined) {
+        return String(info.accountId);
+    }
 
-    if (isDuplicateIncoming(dedupeKey)) {
+    if (info.id1 !== null && info.id1 !== undefined) {
+        return String(info.id1);
+    }
+
+    return "unknown";
+}
+
+function incomingKindForInfo(info) {
+    if (
+        info &&
+        (
+            info.accountId === -1 ||
+            info.playerId === -1 ||
+            info.id === -1
+        )
+    ) {
+        return "game";
+    }
+
+    return info && info.kind ? info.kind : "game";
+}
+
+function emitChatMessage(sourceName, fd, len, offset, info) {
+    const incomingKind = incomingKindForInfo(info);
+    const publicIdHex = hexU32(info.publicId);
+    const displayId = displayIdFor(info);
+    const dedupeKey = makeDedupeKey(info, displayId, len, offset);
+
+    if (isDuplicate(dedupeKey)) {
         return true;
     }
 
+    const label = CHAT_LABEL_BY_KIND[incomingKind] || String(incomingKind || "chat").toUpperCase();
+    const nick = info.nick || label.toLowerCase();
+
     const event = {
+        kind: incomingKind,
+        parsedKind: info.kind,
+        label: label,
         direction: "recv",
         source: sourceName,
         fd: fd,
         packetLen: len,
         offset: offset,
 
-        id: playerId,
-        playerId: playerId,
-        accountId: playerId,
-        displayId: playerIdText,
-        publicId: publicId,
+        id: info.accountId,
+        playerId: info.accountId,
+        accountId: info.accountId,
+        displayId: displayId,
+        publicId: info.publicId,
         publicIdHex: publicIdHex,
+        id1: info.id1,
+        id2: info.id2,
+        targetId: info.targetId,
+        clanRole: info.clanRole,
 
-        nick: info.nick,
+        nick: nick,
         message: info.msg,
         nickLen: info.nickLen,
         msgLen: info.msgLen,
@@ -752,15 +1057,21 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
     };
 
     state.incomingCount = (state.incomingCount || 0) + 1;
+
+    if (!state.incomingCounts) {
+        state.incomingCounts = {};
+    }
+
+    state.incomingCounts[incomingKind] = (state.incomingCounts[incomingKind] || 0) + 1;
     state.lastIncoming = event;
 
     send({
         type: "chat_message",
         payload: event,
         line:
-            "[CHAT] " +
-            "[" + playerIdText + "] " +
-            info.nick +
+            "[" + label + "] " +
+            "[" + displayId + "] " +
+            nick +
             ": " +
             info.msg
     });
@@ -772,43 +1083,79 @@ function handleIncomingPacket(sourceName, fd, buf, len) {
     if (!state.recvEnabled) return false;
     if (len <= 0 || len > MAX_PACKET_LEN) return false;
 
+    const firstOpcode = buf.readU8() & 0xff;
+
+    if (CHAT_KIND_BY_OPCODE[firstOpcode] && emitIncomingAtOffset(sourceName, fd, buf, len, 0)) {
+        return true;
+    }
+
     let found = false;
 
-    for (let offset = 0; offset < len; offset++) {
-        if ((buf.add(offset).readU8() & 0xff) !== CHAT_OPCODE) {
+    for (let offset = 1; offset < len; offset++) {
+        const opcode = buf.add(offset).readU8() & 0xff;
+
+        if (!CHAT_KIND_BY_OPCODE[opcode]) {
             continue;
         }
 
-        const info = parseChatFromPtr(buf.add(offset), len - offset);
-
-        if (!info) {
-            continue;
-        }
-
-        if (!isLikelyIncomingChat(info)) {
-            continue;
-        }
-
-        emitChatMessage(sourceName, fd, buf, len, offset, info);
-        found = true;
+        found = emitIncomingAtOffset(sourceName, fd, buf, len, offset) || found;
     }
 
     return found;
 }
 
-// agent/src/hooks.js
-
-function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen) {
-    if (state.injecting) return false;
-    if (len <= 0 || len > MAX_PACKET_LEN) return false;
-
-    const info = parseChatFromPtr(buf, len);
+function emitIncomingAtOffset(sourceName, fd, buf, len, offset) {
+    const info = parseChatFromPtr(buf.add(offset), len - offset, "recv");
 
     if (!info) {
         return false;
     }
 
-    saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen);
+    if (!isLikelyIncomingChat(info)) {
+        return false;
+    }
+
+    emitChatMessage(sourceName, fd, len, offset, info);
+    return true;
+}
+
+// agent/src/hooks.js
+function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen) {
+    if (state.injecting) return false;
+    if (len <= 0 || len > MAX_PACKET_LEN) return false;
+
+    const firstOpcode = buf.readU8() & 0xff;
+
+    if (
+        CHAT_KIND_BY_OPCODE[firstOpcode] &&
+        saveTemplateAtOffset(sourceName, fd, buf, len, 0, sockaddr, sockaddrLen)
+    ) {
+        return true;
+    }
+
+    for (let offset = 1; offset < len; offset++) {
+        const opcode = buf.add(offset).readU8() & 0xff;
+
+        if (!CHAT_KIND_BY_OPCODE[opcode]) {
+            continue;
+        }
+
+        if (saveTemplateAtOffset(sourceName, fd, buf, len, offset, sockaddr, sockaddrLen)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function saveTemplateAtOffset(sourceName, fd, buf, len, offset, sockaddr, sockaddrLen) {
+    const info = parseChatFromPtr(buf.add(offset), len - offset, "send");
+
+    if (!info) {
+        return false;
+    }
+
+    saveTemplate(sourceName, fd, buf.add(offset), len - offset, info, sockaddr, sockaddrLen);
     return true;
 }
 
@@ -883,31 +1230,90 @@ function installHooks(nativeApi) {
 }
 
 // agent/src/rpc.js
+function templateStatus(template) {
+    if (!template) return null;
+
+    return {
+        kind: template.kind,
+        source: template.source,
+        fd: template.fd,
+        nick: template.nick,
+        lastMessage: template.lastMessage,
+        templateLen: template.packetLen,
+        msgLenOffset: template.msgLenOffset,
+        msgStart: template.msgStart,
+        msgEnd: template.msgEnd,
+        tailOffset: template.tailOffset,
+        tailLen: template.tailLen,
+        targetId: template.targetId,
+        id1: template.id1,
+        id2: template.id2,
+        hasSockaddr: !!(
+            template.sockaddrArray &&
+            template.sockaddrLen > 0
+        )
+    };
+}
+
+function allTemplateStatuses() {
+    const result = {};
+    const templates = state.chatTemplates || {};
+
+    for (let i = 0; i < CHAT_KINDS.length; i++) {
+        const kind = CHAT_KINDS[i];
+        result[kind] = templateStatus(templates[kind]);
+    }
+
+    return result;
+}
 
 function installRpc(nativeApi) {
     rpc.exports = {
         status() {
+            const templates = allTemplateStatuses();
+            const activeTemplate = templates[state.sendKind] || templateStatus(state.chatTemplate);
+
             return {
                 templateCaptured: state.chatTemplate !== null,
-                fd: state.chatTemplate ? state.chatTemplate.fd : null,
-                nick: state.chatTemplate ? state.chatTemplate.nick : null,
-                lastMessage: state.chatTemplate ? state.chatTemplate.lastMessage : null,
-                templateLen: state.chatTemplate ? state.chatTemplate.packetLen : null,
+                activeTemplateCaptured: activeTemplate !== null,
+                sendKind: state.sendKind,
+                fd: activeTemplate ? activeTemplate.fd : null,
+                nick: activeTemplate ? activeTemplate.nick : null,
+                lastMessage: activeTemplate ? activeTemplate.lastMessage : null,
+                templateLen: activeTemplate ? activeTemplate.templateLen : null,
+                templates: templates,
                 recvEnabled: state.recvEnabled,
                 incomingCount: state.incomingCount || 0,
+                incomingCounts: state.incomingCounts || {},
                 lastIncoming: state.lastIncoming,
-                hasSockaddr: !!(
-                    state.chatTemplate &&
-                    state.chatTemplate.sockaddrArray &&
-                    state.chatTemplate.sockaddrLen > 0
-                ),
+                hasSockaddr: !!(activeTemplate && activeTemplate.hasSockaddr),
                 maxLenBytes: state.maxLenBytes,
                 rateLimitMs: state.rateLimitMs
             };
         },
 
         sendchat(text) {
-            return injectChat(String(text), nativeApi);
+            return injectChat(String(text), nativeApi, state.sendKind, {});
+        },
+
+        sendchatkind(kind, text, targetId, targetField) {
+            const options = {};
+
+            if (targetId !== null && targetId !== undefined && String(targetId) !== "") {
+                options.targetId = targetId;
+            }
+
+            if (targetField !== null && targetField !== undefined && String(targetField) !== "") {
+                options.targetField = String(targetField);
+            }
+
+            return injectChat(String(text), nativeApi, normalizeChatKind(kind), options);
+        },
+
+        setsendkind(kind) {
+            state.sendKind = normalizeChatKind(kind);
+            console.log("[CONFIG] sendKind=" + state.sendKind);
+            return { ok: true, sendKind: state.sendKind };
         },
 
         setmaxlen(n) {
@@ -959,17 +1365,34 @@ function installRpc(nativeApi) {
 
         clearrecv() {
             state.incomingCount = 0;
+            state.incomingCounts = {};
             state.lastIncoming = null;
             state.incomingDedupe = {};
             console.log("[CONFIG] incoming chat state cleared");
             return { ok: true };
         },
 
-        clear() {
+        clear(kind) {
+            if (kind !== null && kind !== undefined && String(kind).trim() !== "") {
+                const chatKind = normalizeChatKind(kind);
+
+                if (state.chatTemplates) {
+                    delete state.chatTemplates[chatKind];
+                }
+
+                if (state.chatTemplate && state.chatTemplate.kind === chatKind) {
+                    state.chatTemplate = null;
+                }
+
+                console.log("[CONFIG] template cleared kind=" + chatKind);
+                return { ok: true, kind: chatKind };
+            }
+
             state.chatTemplate = null;
+            state.chatTemplates = {};
             state.lastInjectAtMs = 0;
 
-            console.log("[CONFIG] template cleared");
+            console.log("[CONFIG] all templates cleared");
 
             return {
                 ok: true
@@ -979,13 +1402,12 @@ function installRpc(nativeApi) {
 }
 
 // agent/src/main.js
-
 const nativeApi = createNativeApi();
 
 installHooks(nativeApi);
 installRpc(nativeApi);
 
 console.log("[*] chat injector loaded");
-console.log("[*] Send any message in real Nebulous.io chat to capture template.");
+console.log("[*] Send one real message per chat kind to capture templates: game/clan/private.");
 
 })();

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 
 from .console import print_help, print_info, print_ok, print_warn
+from .frida_client import get_chat_display_filter, set_chat_display_filter
 
 
 class CommandResult(Enum):
@@ -19,6 +20,7 @@ class CommandContext:
     rpc: Any
     reset_local_rate_limit: Any
     chat_logger: Any | None = None
+    send_chat: Any | None = None
 
 
 def pretty_status(st: dict[str, Any]) -> str:
@@ -80,6 +82,65 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
             print_error(f"setratems failed: {exc}")
         return CommandResult.HANDLED
 
+    if text.startswith("/send"):
+        parts = text.split(maxsplit=1)
+        if len(parts) != 2:
+            print_warn("Usage: /send game|clan|private")
+            return CommandResult.HANDLED
+
+        try:
+            result = ctx.rpc.setsendkind(parts[1])
+            print_ok(f"sendKind={result.get('sendKind')}")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(f"setsendkind failed: {exc}")
+
+        return CommandResult.HANDLED
+
+    if text.startswith("/show"):
+        parts = text.split(maxsplit=1)
+        if len(parts) != 2:
+            print_info(f"show={get_chat_display_filter()}")
+            print_warn("Usage: /show all|off|game|clan|private")
+            return CommandResult.HANDLED
+
+        try:
+            selected = set_chat_display_filter(parts[1])
+            print_ok(f"show={selected}")
+        except Exception as exc:
+            from .console import print_error
+
+            print_error(str(exc))
+
+        return CommandResult.HANDLED
+
+    if text.startswith("/game "):
+        send_from_command(ctx, "game", text[6:].strip())
+        return CommandResult.HANDLED
+
+    if text.startswith("/clan "):
+        send_from_command(ctx, "clan", text[6:].strip())
+        return CommandResult.HANDLED
+
+    if text.startswith("/pm "):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            print_warn("Usage: /pm <targetAccountId> <message>")
+            return CommandResult.HANDLED
+
+        send_from_command(ctx, "private", parts[2], target_id=parts[1])
+        return CommandResult.HANDLED
+
+    if text.startswith("/private "):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            print_warn("Usage: /private <targetAccountId> <message>")
+            return CommandResult.HANDLED
+
+        send_from_command(ctx, "private", parts[2], target_id=parts[1])
+        return CommandResult.HANDLED
+
     if text == "/clear":
         try:
             ctx.rpc.clear()
@@ -133,6 +194,23 @@ def handle_command(text: str, ctx: CommandContext) -> CommandResult:
     return CommandResult.MESSAGE
 
 
+def send_from_command(
+    ctx: CommandContext,
+    kind: str,
+    message: str,
+    target_id: str | None = None,
+) -> None:
+    if not message:
+        print_warn("Message must not be empty.")
+        return
+
+    if ctx.send_chat is None:
+        print_warn("Sending from commands is not available in this context.")
+        return
+
+    ctx.send_chat(message, kind=kind, target_id=target_id)
+
+
 def handle_log_command(text: str, ctx: CommandContext) -> None:
     logger = ctx.chat_logger
 
@@ -148,6 +226,14 @@ def handle_log_command(text: str, ctx: CommandContext) -> None:
         print_info(
             f"log={state} records={st.get('recordsWritten')} file={st.get('path')}"
         )
+        paths = st.get("paths")
+        if isinstance(paths, dict):
+            for kind, path in paths.items():
+                records = ""
+                records_by_kind = st.get("recordsByKind")
+                if isinstance(records_by_kind, dict):
+                    records = f" records={records_by_kind.get(kind, 0)}"
+                print_info(f"  {kind}: {path}{records}")
         return
 
     action = parts[1]

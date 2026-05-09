@@ -1,4 +1,4 @@
-import { MAX_PACKET_LEN } from "./constants.js";
+import { CHAT_KIND_BY_OPCODE, MAX_PACKET_LEN } from "./constants.js";
 import { parseChatFromPtr } from "./packet.js";
 import { state } from "./state.js";
 import { saveTemplate } from "./template.js";
@@ -8,13 +8,38 @@ export function handleChatPacket(sourceName, fd, buf, len, sockaddr, sockaddrLen
     if (state.injecting) return false;
     if (len <= 0 || len > MAX_PACKET_LEN) return false;
 
-    const info = parseChatFromPtr(buf, len);
+    const firstOpcode = buf.readU8() & 0xff;
+
+    if (
+        CHAT_KIND_BY_OPCODE[firstOpcode] &&
+        saveTemplateAtOffset(sourceName, fd, buf, len, 0, sockaddr, sockaddrLen)
+    ) {
+        return true;
+    }
+
+    for (let offset = 1; offset < len; offset++) {
+        const opcode = buf.add(offset).readU8() & 0xff;
+
+        if (!CHAT_KIND_BY_OPCODE[opcode]) {
+            continue;
+        }
+
+        if (saveTemplateAtOffset(sourceName, fd, buf, len, offset, sockaddr, sockaddrLen)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function saveTemplateAtOffset(sourceName, fd, buf, len, offset, sockaddr, sockaddrLen) {
+    const info = parseChatFromPtr(buf.add(offset), len - offset, "send");
 
     if (!info) {
         return false;
     }
 
-    saveTemplate(sourceName, fd, buf, len, info, sockaddr, sockaddrLen);
+    saveTemplate(sourceName, fd, buf.add(offset), len - offset, info, sockaddr, sockaddrLen);
     return true;
 }
 

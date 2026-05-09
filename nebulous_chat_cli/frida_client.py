@@ -12,11 +12,57 @@ from .colors import format_chat_message
 from .console import print_error
 
 _chat_logger: Any | None = None
+_display_filter = "all"
 
 
 def set_chat_logger(logger: Any | None) -> None:
     global _chat_logger
     _chat_logger = logger
+
+
+def set_chat_display_filter(kind: str) -> str:
+    global _display_filter
+    _display_filter = normalize_display_filter(kind)
+    return _display_filter
+
+
+def get_chat_display_filter() -> str:
+    return _display_filter
+
+
+def normalize_display_filter(kind: object) -> str:
+    value = str(kind or "all").lower()
+    aliases = {
+        "all": "all",
+        "a": "all",
+        "on": "all",
+        "off": "off",
+        "none": "off",
+        "chat": "game",
+        "public": "game",
+        "g": "game",
+        "game": "game",
+        "c": "clan",
+        "clan": "clan",
+        "pm": "private",
+        "p": "private",
+        "private": "private",
+    }
+
+    if value not in aliases:
+        raise ValueError("display filter must be all|off|game|clan|private")
+
+    return aliases[value]
+
+
+def should_display_payload(payload: dict[str, Any]) -> bool:
+    if _display_filter == "all":
+        return True
+
+    if _display_filter == "off":
+        return False
+
+    return str(payload.get("kind") or "game").lower() == _display_filter
 
 
 def on_message(message: dict[str, Any], data: Any) -> None:
@@ -38,7 +84,8 @@ def on_message(message: dict[str, Any], data: Any) -> None:
                 chat_payload = payload["payload"]
                 if _chat_logger is not None:
                     _chat_logger.log_incoming(chat_payload)
-                print(format_chat_message(chat_payload))
+                if should_display_payload(chat_payload):
+                    print(format_chat_message(chat_payload))
             elif "line" in payload:
                 print(str(payload["line"]))
             else:

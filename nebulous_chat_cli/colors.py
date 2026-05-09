@@ -39,6 +39,32 @@ DEFAULT_CHAT_COLOR_CONFIG: dict[str, Any] = {
         "nick": "green",
         "message": "default",
     },
+    "kinds": {
+        "game": {
+            "prefix": "yellow",
+            "id": "green",
+            "nick": "green",
+            "message": "default",
+        },
+        "clan": {
+            "prefix": "cyan",
+            "id": "bright_cyan",
+            "nick": "bright_cyan",
+            "message": "default",
+        },
+        "private": {
+            "prefix": "magenta",
+            "id": "bright_magenta",
+            "nick": "bright_magenta",
+            "message": "default",
+        },
+    },
+}
+
+CHAT_LABELS = {
+    "game": "CHAT",
+    "clan": "CLAN",
+    "private": "PM",
 }
 
 
@@ -66,6 +92,19 @@ def load_chat_color_config(path: Path = CHAT_COLORS_FILE) -> dict[str, Any]:
             value = chat.get(key)
             if is_supported_color(value):
                 config["chat"][key] = value
+                config["kinds"]["game"][key] = value
+
+    kinds = loaded.get("kinds")
+    if isinstance(kinds, dict):
+        for kind in CHAT_LABELS:
+            kind_config = kinds.get(kind)
+            if not isinstance(kind_config, dict):
+                continue
+
+            for key in ("prefix", "id", "nick", "message"):
+                value = kind_config.get(key)
+                if is_supported_color(value):
+                    config["kinds"][kind][key] = value
 
     return config
 
@@ -113,10 +152,17 @@ def format_chat_message(
     environ: dict[str, str] | None = None,
 ) -> str:
     cfg = config or load_chat_color_config()
-    chat = cfg.get("chat") if isinstance(cfg.get("chat"), dict) else {}
+    kind = normalize_chat_kind(_field(payload, "kind", default="game"))
+    kind_configs = cfg.get("kinds") if isinstance(cfg.get("kinds"), dict) else {}
+    chat = kind_configs.get(kind) if isinstance(kind_configs.get(kind), dict) else {}
+
+    if not chat:
+        chat = cfg.get("chat") if isinstance(cfg.get("chat"), dict) else {}
+
     use_color = should_use_color(cfg.get("enabled", "auto"), stream=stream, environ=environ)
 
-    prefix = colorize("[CHAT]", str(chat.get("prefix", "yellow")), use_color)
+    label = CHAT_LABELS.get(kind, str(kind).upper())
+    prefix = colorize(f"[{label}]", str(chat.get("prefix", "yellow")), use_color)
     display_id = colorize(f"[{_field(payload, 'displayId', 'id')}]", str(chat.get("id", "green")), use_color)
     nick = colorize(_field(payload, "nick", default=""), str(chat.get("nick", "green")), use_color)
     message = colorize(_field(payload, "message", default=""), str(chat.get("message", "default")), use_color)
@@ -133,8 +179,27 @@ def _field(payload: dict[str, Any], *names: str, default: str = "unknown") -> st
     return default
 
 
+def normalize_chat_kind(kind: object) -> str:
+    value = str(kind or "game").lower()
+    aliases = {
+        "chat": "game",
+        "public": "game",
+        "g": "game",
+        "c": "clan",
+        "clan": "clan",
+        "pm": "private",
+        "p": "private",
+        "private": "private",
+    }
+    return aliases.get(value, "game")
+
+
 def _deep_copy_default() -> dict[str, Any]:
     return {
         "enabled": DEFAULT_CHAT_COLOR_CONFIG["enabled"],
         "chat": dict(DEFAULT_CHAT_COLOR_CONFIG["chat"]),
+        "kinds": {
+            kind: dict(values)
+            for kind, values in DEFAULT_CHAT_COLOR_CONFIG["kinds"].items()
+        },
     }

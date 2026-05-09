@@ -6,6 +6,11 @@ Commands:
   /status        show template/fd/nick/rate/max/recv state
   /max 128       set maxLenBytes
   /rate 1000     set the rate limit in milliseconds
+  /send game      set default outgoing chat: game, clan, or private
+  /game hello     send one message to public chat
+  /clan hello     send one message to clan chat
+  /pm 123 hello   send one private message to account/player id 123
+  /show all       show incoming: all, off, game, clan, or private
   /recv on       enable incoming chat output
   /recv off      disable incoming chat output
   /log status    show chat log state and current file
@@ -20,7 +25,7 @@ Commands:
   /exit          exit
   /quit          exit
 
-Plain text without "/" is sent to chat through Frida RPC.
+Plain text without "/" is sent to the default outgoing chat through Frida RPC.
 Incoming messages are printed automatically when recvEnabled=true.
 
 Flow:
@@ -29,6 +34,9 @@ Flow:
   3) Send any message manually in the in-game chat.
   4) Wait for the [CHAT TEMPLATE] log.
   5) Type messages into this CLI console.
+
+For clan/private sending, manually send one message from that in-game chat first
+so the agent can capture its packet template.
 """.strip()
 
 

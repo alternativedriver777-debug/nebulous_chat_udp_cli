@@ -62,7 +62,7 @@ class ChatCliAppTests(unittest.TestCase):
             app.send_chat_text(rpc, "hello")
 
         self.assertEqual(rpc.sent, ["hello"])
-        self.assertIn("SEND [self] Me: hello", app.chat_logger.path.read_text(encoding="utf-8"))
+        self.assertIn("SEND CHAT [self] Me: hello", app.chat_logger.path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

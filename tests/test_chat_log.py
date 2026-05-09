@@ -27,13 +27,39 @@ class ChatLoggerTests(unittest.TestCase):
 
             lines = logger.read_log(lines=0)
 
-        self.assertEqual(logger.path.name, "chat_2026-05-04_22-10-30.log")
+        self.assertEqual(logger.path.name, "chat_2026-05-04_22-10-30_game.log")
         self.assertEqual(len(lines), 2)
-        self.assertIn("RECV [123456] Rush: hello", lines[0])
+        self.assertIn("RECV CHAT [123456] Rush: hello", lines[0])
         self.assertNotIn("publicId=0x01020304", lines[0])
         self.assertNotIn("source=recv", lines[0])
-        self.assertIn("SEND [self] Me: hi there", lines[1])
+        self.assertIn("SEND CHAT [self] Me: hi there", lines[1])
         self.assertIn("via=send", lines[1])
+
+    def test_logs_are_split_by_chat_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = ChatLogger(
+                log_dir=Path(tmp),
+                started_at=datetime(2026, 5, 4, 22, 10, 30),
+            )
+
+            logger.log_incoming({
+                "kind": "clan",
+                "displayId": "123456",
+                "nick": "Rush",
+                "message": "clan hello",
+            })
+            logger.log_outgoing(
+                "secret",
+                nick="Me",
+                kind="private",
+                result={"kind": "private", "targetId": 42},
+            )
+
+            clan_log = logger.paths["clan"].read_text(encoding="utf-8")
+            private_log = logger.paths["private"].read_text(encoding="utf-8")
+
+        self.assertIn("RECV CLAN [123456] Rush: clan hello", clan_log)
+        self.assertIn("SEND PRIVATE [42] Me: secret", private_log)
 
     def test_disabled_logger_does_not_create_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -47,8 +73,8 @@ class ChatLoggerTests(unittest.TestCase):
     def test_list_and_index_log_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_dir = Path(tmp)
-            older = log_dir / "chat_2026-05-04_10-00-00.log"
-            newer = log_dir / "chat_2026-05-04_11-00-00.log"
+            older = log_dir / "chat_2026-05-04_10-00-00_game.log"
+            newer = log_dir / "chat_2026-05-04_11-00-00_clan.log"
             older.write_text("older\n", encoding="utf-8")
             newer.write_text("newer\n", encoding="utf-8")
 

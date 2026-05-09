@@ -9,7 +9,7 @@ from .chat_log import ChatLogger
 from .commands import CommandContext, CommandResult, get_status_safe, handle_command
 from .config import AGENT_FILE, DEFAULT_ADB_TIMEOUT, DEFAULT_FRIDA_SERVER_PATH, DEFAULT_FRIDA_TIMEOUT, PROCESS_NAME
 from .console import print_error, print_help, print_info, print_ok, print_warn
-from .frida_client import connect, load_agent_source, set_chat_logger
+from .frida_client import connect, load_agent_source, set_chat_display_filter, set_chat_logger
 from .options import CliOptions
 
 
@@ -37,9 +37,12 @@ class ChatCliApp:
             return 1
 
         set_chat_logger(self.chat_logger)
+        set_chat_display_filter("all")
 
         if self.chat_logger.enabled:
-            print_info(f"Chat log: {self.chat_logger.path}")
+            print_info("Chat logs:")
+            for kind, path in self.chat_logger.paths.items():
+                print_info(f"  {kind}: {path}")
         else:
             print_info("Chat log: disabled")
 
@@ -83,6 +86,12 @@ class ChatCliApp:
                 rpc=rpc,
                 reset_local_rate_limit=self.reset_local_rate_limit,
                 chat_logger=self.chat_logger,
+                send_chat=lambda message, kind=None, target_id=None: self.send_chat_text(
+                    rpc,
+                    message,
+                    kind=kind,
+                    target_id=target_id,
+                ),
             )
 
             while True:
@@ -144,14 +153,28 @@ class ChatCliApp:
         print_info("Done.")
         return 0
 
-    def send_chat_text(self, rpc: object, text: str) -> None:
+    def send_chat_text(
+        self,
+        rpc: object,
+        text: str,
+        kind: str | None = None,
+        target_id: str | int | None = None,
+    ) -> None:
         try:
             st = get_status_safe(rpc)
         except Exception as exc:
             print_error(str(exc))
             return
 
-        if not st.get("templateCaptured"):
+        send_kind = str(kind or st.get("sendKind") or "game").lower()
+        templates = st.get("templates") if isinstance(st.get("templates"), dict) else {}
+        template_for_kind = templates.get(send_kind) if isinstance(templates, dict) else None
+
+        if templates and not template_for_kind:
+            print_warn(f"Send one {send_kind} message manually in the game first to capture its template.")
+            return
+
+        if not templates and not st.get("templateCaptured"):
             print_warn("Send any message in the in-game chat first to capture the template.")
             return
 
@@ -177,27 +200,38 @@ class ChatCliApp:
                 return
 
         try:
-            result = rpc.sendchat(text)  # type: ignore[attr-defined]
+            if kind is None and target_id is None:
+                result = rpc.sendchat(text)  # type: ignore[attr-defined]
+            else:
+                result = rpc.sendchatkind(send_kind, text, target_id, "second")  # type: ignore[attr-defined]
+
             self.last_local_send_at = time.monotonic() * 1000.0
 
             ok = bool(result.get("ok"))
+            result_kind = str(result.get("kind") or send_kind)
             via = result.get("via")
             r = result.get("result")
             packet_len = result.get("packetLen")
             msg_bytes = result.get("bytes")
+            result_target_id = result.get("targetId")
 
             if ok:
                 self.chat_logger.log_outgoing(
                     text,
                     nick=str(st.get("nick") or "me"),
                     result=result,
+                    kind=result_kind,
                 )
-                print_ok(f"sent: bytes={msg_bytes} packetLen={packet_len} via={via} r={r}")
+                target_part = f" targetId={result_target_id}" if result_target_id is not None else ""
+                print_ok(
+                    f"sent {result_kind}: bytes={msg_bytes} "
+                    f"packetLen={packet_len} via={via} r={r}{target_part}"
+                )
             else:
                 print_warn(
-                    f"send returned unexpected result: bytes={msg_bytes} "
+                    f"send {result_kind} returned unexpected result: bytes={msg_bytes} "
                     f"packetLen={packet_len} via={via} r={r}"
                 )
 
         except Exception as exc:
-            print_error(f"sendchat failed: {exc}")
+            print_error(f"sendchat {send_kind} failed: {exc}")

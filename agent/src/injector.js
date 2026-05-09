@@ -1,11 +1,27 @@
+import { CHAT_KINDS } from "./constants.js";
 import { arrayToMemory, sockaddrArrayToMemory } from "./memory.js";
 import { buildChatMessage } from "./packet.js";
 import { state } from "./state.js";
 import { nowMs, quote } from "./utils.js";
 
-export function injectChat(text, nativeApi) {
-    if (!state.chatTemplate) {
-        throw new Error("template is not captured yet");
+export function normalizeChatKind(kind) {
+    const value = String(kind || state.sendKind || "game").toLowerCase();
+
+    if (CHAT_KINDS.indexOf(value) < 0) {
+        throw new Error("unknown chat kind: " + kind);
+    }
+
+    return value;
+}
+
+export function injectChat(text, nativeApi, kind, options) {
+    const sendKind = normalizeChatKind(kind);
+
+    const templates = state.chatTemplates || {};
+    const template = templates[sendKind] || (sendKind === "game" ? state.chatTemplate : null);
+
+    if (!template) {
+        throw new Error("template for " + sendKind + " chat is not captured yet");
     }
 
     const currentMs = nowMs();
@@ -15,7 +31,7 @@ export function injectChat(text, nativeApi) {
         throw new Error("rate-limit: wait " + (state.rateLimitMs - elapsed) + " ms");
     }
 
-    const built = buildChatMessage(state.chatTemplate, text, state.maxLenBytes);
+    const built = buildChatMessage(template, text, state.maxLenBytes, options || {});
     const packet = built.packet;
 
     const packetPtr = arrayToMemory(packet);
@@ -27,24 +43,24 @@ export function injectChat(text, nativeApi) {
 
     try {
         if (
-            state.chatTemplate.sockaddrArray &&
-            state.chatTemplate.sockaddrLen > 0
+            template.sockaddrArray &&
+            template.sockaddrLen > 0
         ) {
-            const sockaddrPtr = sockaddrArrayToMemory(state.chatTemplate.sockaddrArray);
+            const sockaddrPtr = sockaddrArrayToMemory(template.sockaddrArray);
 
             via = "sendto";
             r = nativeApi.sendtoNative(
-                state.chatTemplate.fd,
+                template.fd,
                 packetPtr,
                 packet.length,
                 0,
                 sockaddrPtr,
-                state.chatTemplate.sockaddrLen
+                template.sockaddrLen
             );
         } else {
             via = "send";
             r = nativeApi.sendNative(
-                state.chatTemplate.fd,
+                template.fd,
                 packetPtr,
                 packet.length,
                 0
@@ -60,18 +76,22 @@ export function injectChat(text, nativeApi) {
     state.lastInjectAtMs = currentMs;
 
     console.log(
-        "[INJECT] text=" + quote(text) +
+        "[INJECT] kind=" + sendKind +
+        " text=" + quote(text) +
         " bytes=" + built.msgBytesLen +
         " packetLen=" + packet.length +
         " via=" + via +
-        " r=" + r
+        " r=" + r +
+        " targetId=" + (built.targetId === null || built.targetId === undefined ? "null" : built.targetId)
     );
 
     return {
         ok: r === packet.length,
+        kind: sendKind,
         result: r,
         via: via,
         bytes: built.msgBytesLen,
-        packetLen: packet.length
+        packetLen: packet.length,
+        targetId: built.targetId
     };
 }

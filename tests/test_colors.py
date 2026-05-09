@@ -47,6 +47,21 @@ class ColorFormattingTests(unittest.TestCase):
         self.assertEqual(no_color_line, "[CHAT] [123456] Rush: hello")
         self.assertEqual(non_tty_line, "[CHAT] [123456] Rush: hello")
 
+    def test_clan_chat_uses_distinct_prefix_and_color(self) -> None:
+        line = format_chat_message(
+            {
+                "kind": "clan",
+                "displayId": "123456",
+                "nick": "Rush",
+                "message": "hello",
+            },
+            stream=FakeStream(True),
+            environ={},
+        )
+
+        self.assertIn("\033[36m[CLAN]" + RESET, line)
+        self.assertIn("\033[96m[123456]" + RESET, line)
+
     def test_custom_config_applies_colors_per_chat_part(self) -> None:
         config = {
             "enabled": "always",

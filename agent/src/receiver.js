@@ -1,4 +1,4 @@
-import { CHAT_OPCODE, MAX_PACKET_LEN } from "./constants.js";
+import { CHAT_KIND_BY_OPCODE, CHAT_LABEL_BY_KIND, MAX_PACKET_LEN } from "./constants.js";
 import { parseChatFromPtr } from "./packet.js";
 import { state } from "./state.js";
 
@@ -7,13 +7,16 @@ const MAX_INCOMING_NICK_BYTES = 64;
 const MAX_INCOMING_MESSAGE_BYTES = 512;
 
 function hexU32(v) {
+    if (v === null || v === undefined) return null;
     return "0x" + ("00000000" + (v >>> 0).toString(16)).slice(-8);
 }
 
-function makeDedupeKey(info, playerIdText, publicIdHex, packetLen, offset) {
+function makeDedupeKey(info, displayId, packetLen, offset) {
     return [
-        playerIdText,
-        publicIdHex,
+        incomingKindForInfo(info),
+        displayId,
+        info.id1,
+        info.id2,
         info.nick,
         info.msg,
         info.msgLen,
@@ -53,52 +56,95 @@ function hasControlChars(s) {
     return false;
 }
 
-function isCleanChatText(s) {
+function isCleanChatText(s, allowEmpty) {
     return (
         typeof s === "string" &&
-        s.length > 0 &&
+        (allowEmpty || s.length > 0) &&
         s.indexOf("\ufffd") === -1 &&
         !hasControlChars(s)
     );
 }
 
 function isLikelyIncomingChat(info) {
+    if (!info) return false;
+
+    if (
+        info.msgLen <= 0 ||
+        info.msgLen > MAX_INCOMING_MESSAGE_BYTES ||
+        !isCleanChatText(info.msg, false)
+    ) {
+        return false;
+    }
+
     return (
         info.nickLen > 0 &&
         info.nickLen <= MAX_INCOMING_NICK_BYTES &&
-        info.msgLen > 0 &&
-        info.msgLen <= MAX_INCOMING_MESSAGE_BYTES &&
-        isCleanChatText(info.nick) &&
-        isCleanChatText(info.msg)
+        isCleanChatText(info.nick, false)
     );
 }
 
-function emitChatMessage(sourceName, fd, buf, len, offset, info) {
-    const publicId = info.publicId === null || info.publicId === undefined ? 0 : info.publicId;
-    const publicIdHex = hexU32(publicId);
-    const playerId = info.accountId;
-    const playerIdText = playerId === null ? "unknown" : String(playerId);
-    const dedupeKey = makeDedupeKey(info, playerIdText, publicIdHex, len, offset);
+function displayIdFor(info) {
+    if (info.accountId !== null && info.accountId !== undefined) {
+        return String(info.accountId);
+    }
+
+    if (info.id1 !== null && info.id1 !== undefined) {
+        return String(info.id1);
+    }
+
+    return "unknown";
+}
+
+export function incomingKindForInfo(info) {
+    if (
+        info &&
+        (
+            info.accountId === -1 ||
+            info.playerId === -1 ||
+            info.id === -1
+        )
+    ) {
+        return "game";
+    }
+
+    return info && info.kind ? info.kind : "game";
+}
+
+function emitChatMessage(sourceName, fd, len, offset, info) {
+    const incomingKind = incomingKindForInfo(info);
+    const publicIdHex = hexU32(info.publicId);
+    const displayId = displayIdFor(info);
+    const dedupeKey = makeDedupeKey(info, displayId, len, offset);
 
     if (isDuplicate(dedupeKey)) {
         return true;
     }
 
+    const label = CHAT_LABEL_BY_KIND[incomingKind] || String(incomingKind || "chat").toUpperCase();
+    const nick = info.nick || label.toLowerCase();
+
     const event = {
+        kind: incomingKind,
+        parsedKind: info.kind,
+        label: label,
         direction: "recv",
         source: sourceName,
         fd: fd,
         packetLen: len,
         offset: offset,
 
-        id: playerId,
-        playerId: playerId,
-        accountId: playerId,
-        displayId: playerIdText,
-        publicId: publicId,
+        id: info.accountId,
+        playerId: info.accountId,
+        accountId: info.accountId,
+        displayId: displayId,
+        publicId: info.publicId,
         publicIdHex: publicIdHex,
+        id1: info.id1,
+        id2: info.id2,
+        targetId: info.targetId,
+        clanRole: info.clanRole,
 
-        nick: info.nick,
+        nick: nick,
         message: info.msg,
         nickLen: info.nickLen,
         msgLen: info.msgLen,
@@ -107,15 +153,21 @@ function emitChatMessage(sourceName, fd, buf, len, offset, info) {
     };
 
     state.incomingCount = (state.incomingCount || 0) + 1;
+
+    if (!state.incomingCounts) {
+        state.incomingCounts = {};
+    }
+
+    state.incomingCounts[incomingKind] = (state.incomingCounts[incomingKind] || 0) + 1;
     state.lastIncoming = event;
 
     send({
         type: "chat_message",
         payload: event,
         line:
-            "[CHAT] " +
-            "[" + playerIdText + "] " +
-            info.nick +
+            "[" + label + "] " +
+            "[" + displayId + "] " +
+            nick +
             ": " +
             info.msg
     });
@@ -127,26 +179,38 @@ export function handleIncomingPacket(sourceName, fd, buf, len) {
     if (!state.recvEnabled) return false;
     if (len <= 0 || len > MAX_PACKET_LEN) return false;
 
+    const firstOpcode = buf.readU8() & 0xff;
+
+    if (CHAT_KIND_BY_OPCODE[firstOpcode] && emitIncomingAtOffset(sourceName, fd, buf, len, 0)) {
+        return true;
+    }
+
     let found = false;
 
-    for (let offset = 0; offset < len; offset++) {
-        if ((buf.add(offset).readU8() & 0xff) !== CHAT_OPCODE) {
+    for (let offset = 1; offset < len; offset++) {
+        const opcode = buf.add(offset).readU8() & 0xff;
+
+        if (!CHAT_KIND_BY_OPCODE[opcode]) {
             continue;
         }
 
-        const info = parseChatFromPtr(buf.add(offset), len - offset);
-
-        if (!info) {
-            continue;
-        }
-
-        if (!isLikelyIncomingChat(info)) {
-            continue;
-        }
-
-        emitChatMessage(sourceName, fd, buf, len, offset, info);
-        found = true;
+        found = emitIncomingAtOffset(sourceName, fd, buf, len, offset) || found;
     }
 
     return found;
+}
+
+function emitIncomingAtOffset(sourceName, fd, buf, len, offset) {
+    const info = parseChatFromPtr(buf.add(offset), len - offset, "recv");
+
+    if (!info) {
+        return false;
+    }
+
+    if (!isLikelyIncomingChat(info)) {
+        return false;
+    }
+
+    emitChatMessage(sourceName, fd, len, offset, info);
+    return true;
 }
